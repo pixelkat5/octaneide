@@ -121,7 +121,7 @@ const Compiler = (() => {
   async function runCppWasmer(entry, isCpp) {
     try {
       const clang = await ensureClang();
-      const { Directory } = window._WasmerSDK;
+      const { Directory, Wasmer } = window._WasmerSDK;
 
       const project = new Directory();
       const filesToSend = { ...State.files };
@@ -135,7 +135,7 @@ const Compiler = (() => {
 
       const args = [
         `/project/${entry}`,
-        '-o', '/project/output.wasm',
+        '-o', '/project/a.out',
         State.settings.std,
         State.settings.opt,
         '-I/project',
@@ -148,22 +148,60 @@ const Compiler = (() => {
       if (State.settings.flags) args.push(...State.settings.flags.split(/\s+/).filter(Boolean));
 
       setStatus('spin', 'compiling (Wasmer)…');
-      const instance = await clang.entrypoint.run({ args, mount: { '/project': project } });
-      const output = await instance.wait();
+      Terminal.print('  compiling…', 'info');
 
-      const combined = [output.stdout, output.stderr].filter(Boolean).map(s => s.trim()).join('\n');
-      if (combined) Terminal.write('\x1b[38;5;203m' + combined.replace(/\n/g, '\r\n') + '\x1b[0m\r\n');
+      // Stream stderr live while clang runs, with a 5-minute timeout
+      const compileInstance = await clang.entrypoint.run({ args, mount: { '/project': project } });
 
-      if (!output.ok) {
-        Terminal.print(`✗ Compilation failed (exit ${output.code})`, 'stderr');
-        setExit(output.code || 1); setStatus('ok', 'ready');
-        return true; // handled — was a compile error, not an SDK error
+      // Pipe stderr live to terminal
+      const dec = new TextDecoder();
+      const stderrPipe = compileInstance.stderr.pipeTo(new WritableStream({
+        write(chunk) {
+          const text = dec.decode(chunk).replace(/\n/g, '\r\n');
+          Terminal.write('\x1b[38;5;203m' + text + '\x1b[0m');
+        }
+      })).catch(() => {});
+
+      // Wait with timeout
+      const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+      let compileOutput;
+      try {
+        compileOutput = await Promise.race([
+          compileInstance.wait(),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('Compilation timed out after 5 minutes')), TIMEOUT_MS))
+        ]);
+      } catch (e) {
+        Terminal.print('✗ ' + e.message, 'stderr');
+        setExit(1); setStatus('ok', 'ready');
+        return true;
+      }
+
+      // Also print any stdout from clang (warnings etc.)
+      if (compileOutput.stdout && compileOutput.stdout.trim()) {
+        Terminal.write('\x1b[38;5;203m' + compileOutput.stdout.trim().replace(/\n/g, '\r\n') + '\x1b[0m\r\n');
+      }
+
+      if (!compileOutput.ok) {
+        Terminal.print(`✗ Compilation failed (exit ${compileOutput.code})`, 'stderr');
+        setExit(compileOutput.code || 1); setStatus('ok', 'ready');
+        return true;
       }
 
       Terminal.print('✓ Compiled — running…', 'success');
       setStatus('spin', 'running…');
 
-      const wasmBytes = await project.readFile('output.wasm');
+      // Read the compiled WASM and run it via our own WASI shim
+      // (clang/clang on Wasmer compiles to WASI-compatible output)
+      let wasmBytes;
+      try {
+        wasmBytes = await project.readFile('a.out');
+      } catch(e) {
+        Terminal.print('✗ Could not read compiled output: ' + e.message, 'stderr');
+        Terminal.print('  (compilation may have succeeded but output file not found)', 'warn');
+        setExit(1); setStatus('ok', 'ready');
+        return true;
+      }
+
       const interactive = State.settings.interactiveStdin;
       let exitCode;
       if (interactive && typeof SharedArrayBuffer !== 'undefined') {
@@ -178,6 +216,7 @@ const Compiler = (() => {
 
     } catch (e) {
       Terminal.print('✗ Wasmer error: ' + e.message, 'stderr');
+      console.error('Wasmer compile error:', e);
       return false; // not handled — try fallback
     }
   }

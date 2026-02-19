@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>OctaneIDE</title>
+  <link rel="manifest" href="manifest.json"/>
+  <link rel="stylesheet" href="vendor/fonts/fonts.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+  <link rel="stylesheet" href="vendor/xterm/xterm.css"/>
+  <link rel="stylesheet" href="css/main.css"/>
+</head>
+<body>
+<div id="app">
+  <header id="titlebar">
+    <div class="logo">Octane<span>IDE</span></div>
+    <div class="spacer"></div>
+    <div id="run-info"></div>
+    <div id="status-wrap">
+      <div class="dot" id="status-dot"></div>
+      <span id="status-text">starting…</span>
+    </div>
+    <button id="btn-settings" class="hdr-btn" title="Settings (Ctrl+,)">⚙</button>
+    <button id="btn-run" title="Run (Ctrl+Enter)">▶ Run</button>
+  </header>
+  <div id="body">
+    <aside id="sidebar">
+      <div id="sidebar-header">
+        <span>files</span>
+        <div class="sidebar-actions">
+          <button class="sbar-btn" id="btn-new-file" title="New file"><i class="fa-solid fa-file-circle-plus"></i></button>
+          <button class="sbar-btn" id="btn-new-folder" title="New folder"><i class="fa-solid fa-folder-plus"></i></button>
+        </div>
+      </div>
+      <div id="file-list"></div>
+    </aside>
+    <div id="sidebar-resize-handle"></div>
+    <div id="editor-col">
+      <div id="editor-tabs"></div>
+      <div id="monaco-container"></div>
+      <div id="editor-placeholder"><div class="loader"></div><span>loading editor…</span></div>
+    </div>
+    <div id="resize-handle"></div>
+    <div id="output-col">
+      <div id="output-header">
+        <div id="output-tabs">
+          <button class="o-tab active" data-panel="terminal">terminal</button>
+          <button class="o-tab" data-panel="preview">preview</button>
+          <button class="o-tab" data-panel="stdin">stdin</button>
+        </div>
+        <div class="spacer"></div>
+        <span id="exit-badge"></span>
+        <button class="hdr-btn" id="btn-clear" title="Clear">⌫</button>
+      </div>
+      <div id="panel-terminal"><div id="xterm-container"></div></div>
+      <div id="panel-preview" class="hidden">
+        <div id="preview-bar">
+          <span id="live-badge">⚡ live</span>
+          <button class="hdr-btn" id="btn-refresh" title="Refresh">↺</button>
+        </div>
+        <iframe id="preview-frame" sandbox="allow-scripts allow-same-origin allow-modals"></iframe>
+      </div>
+      <div id="panel-stdin" class="hidden">
+        <label>stdin — read by your program via cin / input()</label>
+        <textarea id="stdin-input" spellcheck="false" placeholder="type stdin here…"></textarea>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="settings-overlay" class="hidden">
+  <div id="settings-modal">
+    <div id="settings-head"><span>Settings</span><button id="btn-close-settings">✕</button></div>
+    <div id="settings-body">
+      <div class="sg"><div class="sg-title">Editor</div>
+        <div class="sr"><label>Font size</label><input type="range" id="s-fontsize" min="10" max="24" value="13"/><span id="s-fontsize-val">13px</span></div>
+        <div class="sr"><label>Theme</label><select id="s-theme"><option value="vs-dark">Dark</option><option value="vs">Light</option><option value="hc-black">High contrast</option></select></div>
+        <div class="sr"><label>Word wrap</label><input type="checkbox" id="s-wordwrap"/></div>
+      </div>
+      <div class="sg"><div class="sg-title">C / C++ Compiler</div>
+        <div class="sr"><label>Standard</label><select id="s-std"><option value="-std=c++23">C++23</option><option value="-std=c++20">C++20</option><option value="-std=c++17" selected>C++17</option><option value="-std=c++14">C++14</option><option value="-std=c++11">C++11</option><option value="-std=c11">C11</option><option value="-std=c99">C99</option></select></div>
+        <div class="sr"><label>Optimization</label><select id="s-opt"><option value="-O0">-O0 none</option><option value="-O1" selected>-O1 basic</option><option value="-O2">-O2 moderate</option><option value="-O3">-O3 aggressive</option><option value="-Os">-Os size</option></select></div>
+        <div class="sr"><label>Extra flags</label><input type="text" id="s-flags" placeholder="-Wall -Wextra"/></div>
+        <div class="sr"><label>Interactive stdin</label><input type="checkbox" id="s-interactive-stdin" checked/><span style="font-size:11px;color:var(--dim);margin-left:6px">type input in terminal as program runs</span></div>
+      </div>
+      <div class="sg"><div class="sg-title">Web Preview</div>
+        <div class="sr"><label>Live reload</label><input type="checkbox" id="s-livereload" checked/></div>
+        <div class="sr"><label>Reload delay</label><input type="range" id="s-delay" min="200" max="2000" step="100" value="600"/><span id="s-delay-val">600ms</span></div>
+      </div>
+      <div class="sg"><div class="sg-title">C++ Libraries <span class="sg-note">(cached offline)</span></div><div id="lib-list"></div></div>
+      <div class="sg"><div class="sg-title">Python Packages <span class="sg-note">(via micropip · requires Python runtime)</span></div><div id="pypackage-list"></div></div>
+      <div class="sg"><div class="sg-title">Runtimes <span class="sg-note">(download once)</span></div><div id="runtime-list"></div></div>
+    </div>
+  </div>
+</div>
+<div id="modal-overlay" class="hidden">
+  <div id="modal">
+    <!-- Ambient glow behind icon -->
+    <div id="modal-glow"></div>
+
+    <!-- Top: big icon + name -->
+    <div id="modal-hero">
+      <div id="modal-icon-ring">
+        <i id="modal-icon" class="fa-solid fa-file"></i>
+      </div>
+      <div id="modal-hero-text">
+        <div id="modal-lang-name">—</div>
+        <div id="modal-lang-ext"></div>
+      </div>
+      <div id="modal-support-badge" class="hidden"></div>
+    </div>
+
+    <!-- Divider -->
+    <div id="modal-divider"></div>
+
+    <!-- Input -->
+    <div id="modal-input-wrap">
+      <i class="fa-solid fa-pen modal-input-icon"></i>
+      <input id="modal-input" type="text" autocomplete="off" spellcheck="false" placeholder="filename.ext"/>
+    </div>
+
+    <!-- Support info bar -->
+    <div id="modal-info-bar" class="hidden">
+      <img id="modal-si-img" src="" alt="" />
+      <span id="modal-info-msg"></span>
+    </div>
+
+    <!-- Actions -->
+    <div id="modal-actions">
+      <button id="btn-modal-cancel"><i class="fa-solid fa-xmark"></i> cancel</button>
+      <button id="btn-modal-ok" disabled><i class="fa-solid fa-plus"></i> create file</button>
+    </div>
+  </div>
+</div>
+<script src="vendor/xterm/xterm.js"></script>
+<script src="vendor/xterm/xterm-addon-fit.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/loader.js"></script>
+<script src="js/state.js"></script>
+<script src="js/persist.js"></script>
+<script src="js/filetree.js"></script>
+<script src="js/editor.js"></script>
+<script src="js/terminal.js"></script>
+<script src="js/preview.js"></script>
+<script src="js/compiler.js"></script>
+<script src="js/settings.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

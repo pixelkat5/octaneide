@@ -1,15 +1,13 @@
 // ── Preview ─────────────────────────────────────────────
 const Preview = (() => {
   const frame       = document.getElementById('preview-frame');
-  const devFrame    = document.getElementById('devtools-frame');
-  const devHandle   = document.getElementById('devtools-resize-handle');
   const urlInput    = document.getElementById('preview-url');
   const urlScheme   = document.getElementById('preview-url-scheme');
   const liveBadge   = document.getElementById('live-badge');
   const btnDevtools = document.getElementById('btn-devtools');
 
-  let devtoolsOpen = false;
-  let isExternal   = false;
+  let devtoolsOn = false;
+  let isExternal = false;
 
   // ── Build local preview HTML ──
   function build() {
@@ -36,77 +34,38 @@ const Preview = (() => {
       return `<script${attrs.replace(/src=["'][^"']*["']/, '')}>${code}<\/script>`;
     });
 
-    // Inject devtools — always inject but hide until toggled
-    const flavor = State.settings.devtoolsFlavor || 'eruda';
-    const devSnippet = flavor === 'eruda'
-      ? `<script src="https://cdn.jsdelivr.net/npm/eruda@3/eruda.min.js"><\/script><script>eruda.init();eruda.hide();<\/script>`
-      : `<script src="https://cdn.jsdelivr.net/npm/vconsole/dist/vconsole.min.js"><\/script><script>var _vc=new VConsole();_vc.hide();<\/script>`;
-
-    if (html.includes('</body>')) {
-      html = html.replace('</body>', devSnippet + '\n</body>');
-    } else {
-      html += devSnippet;
-    }
+    // inject eruda devtools — hidden by default, shown via parent toggle
+    html = html.replace('</body>',
+      `<script src="https://cdn.jsdelivr.net/npm/eruda@3/eruda.min.js"><\/script>` +
+      `<script>eruda.init();if(!window.__erudaVisible)eruda.hide();<\/script>\n</body>`);
 
     return html;
   }
 
-  // ── Toggle devtools inside the iframe ──
-  function setDevtools(open) {
-    devtoolsOpen = open;
-    btnDevtools.classList.toggle('active', open);
-
-    if (isExternal) {
-      if (open) {
-        btnDevtools.style.color = 'var(--warn)';
-        setTimeout(() => { btnDevtools.style.color = ''; }, 1000);
-      }
-      return;
-    }
-
+  // ── Toggle Eruda inside the iframe ──
+  function applyDevtools() {
+    btnDevtools.classList.toggle('active', devtoolsOn);
+    if (isExternal) return; // can't reach cross-origin iframes
     try {
       const w = frame.contentWindow;
-      if (!w) return;
-      const flavor = State.settings.devtoolsFlavor || 'eruda';
-      if (flavor === 'eruda' && w.eruda) {
-        open ? w.eruda.show() : w.eruda.hide();
-      } else if (flavor === 'vconsole' && w._vc) {
-        open ? w._vc.show() : w._vc.hide();
-      }
-    } catch (e) { /* cross-origin */ }
+      if (!w || !w.eruda) return;
+      devtoolsOn ? w.eruda.show() : w.eruda.hide();
+      w.__erudaVisible = devtoolsOn;
+    } catch (e) { /* cross-origin guard */ }
   }
 
-  btnDevtools.onclick = () => setDevtools(!devtoolsOpen);
-
-  // Ctrl+Shift+I
-  document.addEventListener('keydown', e => {
-    if (e.ctrlKey && e.shiftKey && e.key === 'I') {
-      e.preventDefault();
-      if (State.activePanel === 'preview') setDevtools(!devtoolsOpen);
+  btnDevtools.onclick = () => {
+    devtoolsOn = !devtoolsOn;
+    if (isExternal) {
+      btnDevtools.classList.toggle('active', devtoolsOn);
+      // Flash warning — can't inject into cross-origin pages
+      btnDevtools.style.color = 'var(--warn)';
+      btnDevtools.title = 'DevTools unavailable for external URLs (cross-origin restriction)';
+      setTimeout(() => { btnDevtools.style.color = ''; }, 800);
+      return;
     }
-  });
-
-  // ── Devtools panel resize (for future use when chii works) ──
-  (() => {
-    let dragging = false, startY = 0, startH = 0;
-    devHandle.addEventListener('mousedown', e => {
-      dragging = true; startY = e.clientY;
-      startH = devFrame.getBoundingClientRect().height;
-      devHandle.classList.add('dragging');
-      document.body.style.userSelect = 'none';
-    });
-    document.addEventListener('mousemove', e => {
-      if (!dragging) return;
-      const delta = startY - e.clientY;
-      devFrame.style.height = Math.max(80, Math.min(startH + delta, window.innerHeight * 0.8)) + 'px';
-    });
-    document.addEventListener('mouseup', () => {
-      if (!dragging) return;
-      dragging = false;
-      devHandle.classList.remove('dragging');
-      document.body.style.userSelect = '';
-    });
-  })();
+    applyDevtools();
+  };
 
   // ── Refresh local preview ──
   function refresh() {
@@ -114,18 +73,10 @@ const Preview = (() => {
     urlScheme.textContent = 'about:';
     urlInput.value = '';
     liveBadge.style.display = '';
-
+    btnDevtools.title = 'Toggle DevTools';
     frame.removeAttribute('src');
     frame.srcdoc = build();
-
-    // Re-apply devtools state after the new page loads
-    frame.onload = () => {
-      if (devtoolsOpen) {
-        // Small delay to let eruda/vconsole init inside the iframe
-        setTimeout(() => setDevtools(true), 100);
-      }
-      frame.onload = null;
-    };
+    frame.onload = () => { applyDevtools(); frame.onload = null; };
   }
 
   // ── Navigate to external URL ──
@@ -140,19 +91,21 @@ const Preview = (() => {
     const u = new URL(full);
     urlScheme.textContent = u.protocol + '//';
     urlInput.value = u.host + u.pathname + u.search + u.hash;
+    btnDevtools.title = 'DevTools unavailable for external URLs (cross-origin restriction)';
 
     frame.removeAttribute('srcdoc');
     frame.src = full;
   }
 
-  // ── URL bar ──
+  // ── URL bar interactions ──
   urlInput.addEventListener('keydown', e => {
     if (e.key === 'Enter') {
       const val = urlInput.value.trim();
-      val ? navigateTo(val) : refresh();
+      if (!val) { refresh(); }
+      else { navigateTo(val); }
       urlInput.blur();
     }
-    if (e.key === 'Escape') { urlInput.blur(); if (isExternal) refresh(); }
+    if (e.key === 'Escape') { urlInput.blur(); refresh(); }
   });
 
   urlInput.addEventListener('focus', () => {

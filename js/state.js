@@ -23,7 +23,6 @@ const State = {
     wordWrap:         false,
     downloadedLibs:     [],
     downloadedRuntimes: [],
-    devtoolsFlavor:    'eruda',  // 'eruda' | 'chii'
   },
 };
 

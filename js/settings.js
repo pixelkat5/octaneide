@@ -35,8 +35,6 @@ const Settings = (() => {
       Persist.saveSettings();
     };
     document.getElementById('s-interactive-stdin').onchange = e => { State.settings.interactiveStdin = e.target.checked; Persist.saveSettings(); };
-    document.getElementById('s-devtools-flavor').value = State.settings.devtoolsFlavor || 'chii';
-    document.getElementById('s-devtools-flavor').onchange = e => { State.settings.devtoolsFlavor = e.target.value; Persist.saveSettings(); };
     document.getElementById('s-wordwrap').onchange = e => { State.settings.wordWrap = e.target.checked; Editor.applySettings(); Persist.saveSettings(); };
 
     document.getElementById('btn-settings').onclick = open;

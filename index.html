@@ -60,7 +60,7 @@
             <span id="preview-url-scheme">about:</span>
             <input id="preview-url" type="text" spellcheck="false" placeholder="preview or paste a URL…" />
           </div>
-          <button class="hdr-btn" id="btn-devtools" title="Toggle DevTools (Ctrl+Shift+I)" style="font-size:11px;letter-spacing:-0.5px">&lt;/&gt;</button>
+          <button class="hdr-btn" id="btn-devtools" title="Toggle DevTools (Ctrl+Shift+I)"><i class="fa-solid fa-bug"></i></button>
           <button class="hdr-btn" id="btn-refresh" title="Refresh">↺</button>
         </div>
         <div id="preview-split">
@@ -94,7 +94,7 @@
       <div class="sg"><div class="sg-title">Web Preview</div>
         <div class="sr"><label>Live reload</label><input type="checkbox" id="s-livereload" checked/></div>
         <div class="sr"><label>Reload delay</label><input type="range" id="s-delay" min="200" max="2000" step="100" value="600"/><span id="s-delay-val">600ms</span></div>
-        <div class="sr"><label>DevTools style</label><select id="s-devtools-flavor"><option value="chii">Chii (Chrome DevTools)</option><option value="eruda">Eruda (mobile-style)</option></select></div>
+        <div class="sr"><label>DevTools style</label><select id="s-devtools-flavor"><option value="eruda">Eruda (default)</option><option value="vconsole">vConsole (lightweight)</option></select></div>
       </div>
       <div class="sg"><div class="sg-title">C++ Libraries <span class="sg-note">(cached offline)</span></div><div id="lib-list"></div></div>
       <div class="sg"><div class="sg-title">Python Packages <span class="sg-note">(via micropip · requires Python runtime)</span></div><div id="pypackage-list"></div></div>

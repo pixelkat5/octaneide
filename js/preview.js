@@ -1,34 +1,15 @@
 // ── Preview ─────────────────────────────────────────────
 const Preview = (() => {
-  const frame         = document.getElementById('preview-frame');
-  const devFrame      = document.getElementById('devtools-frame');
-  const devHandle     = document.getElementById('devtools-resize-handle');
-  const urlInput      = document.getElementById('preview-url');
-  const urlScheme     = document.getElementById('preview-url-scheme');
-  const liveBadge     = document.getElementById('live-badge');
-  const btnDevtools   = document.getElementById('btn-devtools');
+  const frame       = document.getElementById('preview-frame');
+  const devFrame    = document.getElementById('devtools-frame');
+  const devHandle   = document.getElementById('devtools-resize-handle');
+  const urlInput    = document.getElementById('preview-url');
+  const urlScheme   = document.getElementById('preview-url-scheme');
+  const liveBadge   = document.getElementById('live-badge');
+  const btnDevtools = document.getElementById('btn-devtools');
 
   let devtoolsOpen = false;
   let isExternal   = false;
-
-  // ── Chii DevTools glue ──
-  // We inject chobitsu into the preview iframe and open the Chii frontend
-  // in devtools-frame. They talk via postMessage bridged through this parent.
-  const CHII_DEVTOOLS = 'https://chii.liriliri.io/front_end/inspector.html?experiments=true&v8only=false&ws=localhost';
-
-  function setupChiiBridge() {
-    // Bridge messages between preview-frame (chobitsu) and devtools-frame (chii frontend)
-    window.addEventListener('message', e => {
-      if (!devtoolsOpen) return;
-      if (e.source === frame.contentWindow) {
-        // preview → devtools
-        try { devFrame.contentWindow.postMessage(e.data, '*'); } catch {}
-      } else if (e.source === devFrame.contentWindow) {
-        // devtools → preview
-        try { frame.contentWindow.postMessage(e.data, '*'); } catch {}
-      }
-    });
-  }
 
   // ── Build local preview HTML ──
   function build() {
@@ -55,94 +36,57 @@ const Preview = (() => {
       return `<script${attrs.replace(/src=["'][^"']*["']/, '')}>${code}<\/script>`;
     });
 
-    const flavor = (State.settings.devtoolsFlavor) || 'chii';
+    // Inject devtools — always inject but hide until toggled
+    const flavor = State.settings.devtoolsFlavor || 'eruda';
+    const devSnippet = flavor === 'eruda'
+      ? `<script src="https://cdn.jsdelivr.net/npm/eruda@3/eruda.min.js"><\/script><script>eruda.init();eruda.hide();<\/script>`
+      : `<script src="https://cdn.jsdelivr.net/npm/vconsole/dist/vconsole.min.js"><\/script><script>var _vc=new VConsole();_vc.hide();<\/script>`;
 
-    if (flavor === 'eruda') {
-      // Inject Eruda — self-contained floating devtools, hidden until toggled
-      const erudaSnippet =
-        `<script src="https://cdn.jsdelivr.net/npm/eruda@3/eruda.min.js"><\/script>` +
-        `<script>eruda.init();eruda.hide();<\/script>`;
-      if (html.includes('</body>')) html = html.replace('</body>', erudaSnippet + '</body>');
-      else html += erudaSnippet;
+    if (html.includes('</body>')) {
+      html = html.replace('</body>', devSnippet + '\n</body>');
     } else {
-      // Inject chobitsu for Chii — pure CDP bridge, no visible UI
-      const chobitsuSnippet =
-        `<script src="https://cdn.jsdelivr.net/npm/chobitsu"><\/script>` +
-        `<script>(function(){
-          chobitsu.setOnMessage(function(msg){ window.parent.postMessage({type:'cdp',data:msg},'*'); });
-          window.addEventListener('message', function(e){ if(e.data&&e.data.type==='cdp') chobitsu.sendMessage(e.data.data); });
-        })();<\/script>`;
-      if (html.includes('</head>')) html = html.replace('</head>', chobitsuSnippet + '</head>');
-      else if (html.includes('<body')) html = html.replace('<body', chobitsuSnippet + '<body');
-      else html = chobitsuSnippet + html;
+      html += devSnippet;
     }
 
     return html;
   }
 
-  // ── Open/close devtools panel ──
-  function openDevtools() {
-    const flavor = (State.settings.devtoolsFlavor) || 'chii';
-    devtoolsOpen = true;
-    btnDevtools.classList.add('active');
+  // ── Toggle devtools inside the iframe ──
+  function setDevtools(open) {
+    devtoolsOpen = open;
+    btnDevtools.classList.toggle('active', open);
 
-    if (flavor === 'eruda') {
-      // Eruda lives inside the iframe — just show it
-      devFrame.classList.add('hidden');
-      devHandle.classList.add('hidden');
-      try {
-        const w = frame.contentWindow;
-        if (w && w.eruda) { w.__erudaVisible = true; w.eruda.show(); }
-      } catch {}
-    } else {
-      // Chii: show the devtools iframe panel
-      devFrame.classList.remove('hidden');
-      devHandle.classList.remove('hidden');
-      // Point devtools frame at chii hosted frontend
-      // Use a blob URL approach so it can communicate via parent postMessage
-      if (!devFrame.src || devFrame.src === 'about:blank') {
-        // Use chii's public hosted DevTools UI
-        devFrame.src = 'https://chii.liriliri.io/front_end/inspector.html?experiments=true';
-      }
-    }
-  }
-
-  function closeDevtools() {
-    const flavor = (State.settings.devtoolsFlavor) || 'chii';
-    devtoolsOpen = false;
-    btnDevtools.classList.remove('active');
-
-    if (flavor === 'eruda') {
-      try {
-        const w = frame.contentWindow;
-        if (w && w.eruda) { w.__erudaVisible = false; w.eruda.hide(); }
-      } catch {}
-    } else {
-      devFrame.classList.add('hidden');
-      devHandle.classList.add('hidden');
-    }
-  }
-
-  btnDevtools.onclick = () => {
     if (isExternal) {
-      // Flash warning
-      btnDevtools.style.color = 'var(--warn)';
-      btnDevtools.title = 'DevTools unavailable for external URLs (cross-origin)';
-      setTimeout(() => { btnDevtools.style.color = ''; btnDevtools.title = 'Toggle DevTools (Ctrl+Shift+I)'; }, 1200);
+      if (open) {
+        btnDevtools.style.color = 'var(--warn)';
+        setTimeout(() => { btnDevtools.style.color = ''; }, 1000);
+      }
       return;
     }
-    devtoolsOpen ? closeDevtools() : openDevtools();
-  };
 
-  // Keyboard shortcut Ctrl+Shift+I
+    try {
+      const w = frame.contentWindow;
+      if (!w) return;
+      const flavor = State.settings.devtoolsFlavor || 'eruda';
+      if (flavor === 'eruda' && w.eruda) {
+        open ? w.eruda.show() : w.eruda.hide();
+      } else if (flavor === 'vconsole' && w._vc) {
+        open ? w._vc.show() : w._vc.hide();
+      }
+    } catch (e) { /* cross-origin */ }
+  }
+
+  btnDevtools.onclick = () => setDevtools(!devtoolsOpen);
+
+  // Ctrl+Shift+I
   document.addEventListener('keydown', e => {
     if (e.ctrlKey && e.shiftKey && e.key === 'I') {
       e.preventDefault();
-      if (State.activePanel === 'preview') btnDevtools.click();
+      if (State.activePanel === 'preview') setDevtools(!devtoolsOpen);
     }
   });
 
-  // ── Devtools panel resize ──
+  // ── Devtools panel resize (for future use when chii works) ──
   (() => {
     let dragging = false, startY = 0, startH = 0;
     devHandle.addEventListener('mousedown', e => {
@@ -153,9 +97,8 @@ const Preview = (() => {
     });
     document.addEventListener('mousemove', e => {
       if (!dragging) return;
-      const delta = startY - e.clientY; // drag up = bigger
-      const newH = Math.max(80, Math.min(startH + delta, window.innerHeight * 0.8));
-      devFrame.style.height = newH + 'px';
+      const delta = startY - e.clientY;
+      devFrame.style.height = Math.max(80, Math.min(startH + delta, window.innerHeight * 0.8)) + 'px';
     });
     document.addEventListener('mouseup', () => {
       if (!dragging) return;
@@ -171,20 +114,15 @@ const Preview = (() => {
     urlScheme.textContent = 'about:';
     urlInput.value = '';
     liveBadge.style.display = '';
-    btnDevtools.title = 'Toggle DevTools (Ctrl+Shift+I)';
-
-    // Reset chii devtools frame so it reconnects to new page
-    if (!devFrame.classList.contains('hidden') && ((State.settings.devtoolsFlavor || 'chii') === 'chii')) {
-      devFrame.src = devFrame.src; // reload devtools ui
-    }
 
     frame.removeAttribute('src');
     frame.srcdoc = build();
 
+    // Re-apply devtools state after the new page loads
     frame.onload = () => {
-      // re-apply eruda state
-      if (devtoolsOpen && (State.settings.devtoolsFlavor || 'chii') === 'eruda') {
-        try { const w = frame.contentWindow; if (w && w.eruda) { w.__erudaVisible = true; w.eruda.show(); } } catch {}
+      if (devtoolsOpen) {
+        // Small delay to let eruda/vconsole init inside the iframe
+        setTimeout(() => setDevtools(true), 100);
       }
       frame.onload = null;
     };
@@ -202,18 +140,16 @@ const Preview = (() => {
     const u = new URL(full);
     urlScheme.textContent = u.protocol + '//';
     urlInput.value = u.host + u.pathname + u.search + u.hash;
-    btnDevtools.title = 'DevTools unavailable for external URLs (cross-origin)';
 
     frame.removeAttribute('srcdoc');
     frame.src = full;
   }
 
-  // ── URL bar interactions ──
+  // ── URL bar ──
   urlInput.addEventListener('keydown', e => {
     if (e.key === 'Enter') {
       const val = urlInput.value.trim();
-      if (!val) { refresh(); }
-      else { navigateTo(val); }
+      val ? navigateTo(val) : refresh();
       urlInput.blur();
     }
     if (e.key === 'Escape') { urlInput.blur(); if (isExternal) refresh(); }
@@ -245,9 +181,6 @@ const Preview = (() => {
       refresh();
     }
   };
-
-  // ── Init ──
-  setupChiiBridge();
 
   // Basic TS type stripping
   function stripTypes(code) {

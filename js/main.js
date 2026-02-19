@@ -59,7 +59,7 @@ document.addEventListener('keydown', e => {
 // ── Service Worker ────────────────────────────────────────────
 if ('serviceWorker' in navigator) {
   const sw = `
-const C='polyide2-v3';
+const C='polyide2-v4';
 const PRECACHE=['./','./index.html','./manifest.json','./css/main.css','./vendor/fonts/fonts.css','./vendor/xterm/xterm.css','./vendor/xterm/xterm.js','./vendor/xterm/xterm-addon-fit.js','./js/state.js','./js/persist.js','./js/filetree.js','./js/editor.js','./js/terminal.js','./js/preview.js','./js/compiler.js','./js/settings.js','./js/main.js'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(C).then(cache=>Promise.allSettled(PRECACHE.map(u=>cache.add(u)))));self.skipWaiting();});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==C).map(k=>caches.delete(k)))));self.clients.claim();});

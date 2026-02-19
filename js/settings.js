@@ -136,7 +136,7 @@ const Settings = (() => {
       if (!window.loadPyodide) {
         await new Promise((res,rej) => {
           const s = document.createElement('script');
-          s.src = 'https://cdn.jsdelivr.net/pyodide/v0.25.1/full/pyodide.js';
+          s.src = 'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js';
           s.onload = res; s.onerror = rej; document.head.appendChild(s);
         });
       }

@@ -8,6 +8,21 @@ const Preview = (() => {
 
   let devtoolsOn = false;
   let isExternal = false;
+  let _erudaCode = null; // cached eruda source
+
+  // Fetch eruda once and cache in memory (works offline via SW)
+  async function getEruda() {
+    if (_erudaCode) return _erudaCode;
+    try {
+      const r = await fetch('/vendor/eruda/eruda.min.js');
+      _erudaCode = await r.text();
+    } catch(e) {
+      _erudaCode = '';
+    }
+    return _erudaCode;
+  }
+  // Kick off fetch immediately so it's ready by first use
+  getEruda();
 
   // ── Build local preview HTML ──
   function build() {
@@ -34,10 +49,13 @@ const Preview = (() => {
       return `<script${attrs.replace(/src=["'][^"']*["']/, '')}>${code}<\/script>`;
     });
 
-    // inject eruda devtools — hidden by default, shown via parent toggle
-    html = html.replace('</body>',
-      `<script src="https://cdn.jsdelivr.net/npm/eruda@3/eruda.min.js"><\/script>` +
-      `<script>eruda.init();if(!window.__erudaVisible)eruda.hide();<\/script>\n</body>`);
+    // inject eruda inline so it works in srcdoc iframes (no src path resolution)
+    const erudaCode = _erudaCode || '';
+    if (erudaCode) {
+      const snippet = `<script>${erudaCode};eruda.init();if(!window.__erudaVisible)eruda.hide();<\/script>`;
+      if (html.includes('</body>')) html = html.replace('</body>', snippet + '\n</body>');
+      else html += snippet;
+    }
 
     return html;
   }

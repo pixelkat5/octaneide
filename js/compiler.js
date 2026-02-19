@@ -83,7 +83,16 @@ const Compiler = (() => {
 
     try {
       const { Wasmer } = window._WasmerSDK;
-      _clang = await Wasmer.fromRegistry('clang/clang');
+      // Try the main package name, fall back to the author-prefixed version
+      try {
+        _clang = await Wasmer.fromRegistry('clang/clang');
+      } catch(e1) {
+        try {
+          _clang = await Wasmer.fromRegistry('syrusakbary/clang');
+        } catch(e2) {
+          throw new Error('Could not find clang in Wasmer registry: ' + e2.message);
+        }
+      }
     } finally {
       clearInterval(timer);
       Terminal.write('\r\x1b[2K'); // clear the spinner line

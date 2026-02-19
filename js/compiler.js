@@ -51,7 +51,7 @@ const Compiler = (() => {
 
     try {
       const mod = await import('https://unpkg.com/@wasmer/sdk@latest/dist/index.mjs');
-      await mod.init();
+      await mod.init({ token: 'wap_803dcea5adfa7402fbd765eb488d6bd54a0c6253ffdc8fd0945df6c2be4e7c5a' });
       window._WasmerSDK = mod;
       _wasmerReady = true;
       Terminal.print('✓ Wasmer SDK ready.', 'success');
@@ -83,7 +83,7 @@ const Compiler = (() => {
 
     try {
       const { Wasmer } = window._WasmerSDK;
-      _clang = await Wasmer.fromRegistry('clang/clang@latest');
+      _clang = await Wasmer.fromRegistry('clang/clang');
     } finally {
       clearInterval(timer);
       Terminal.write('\r\x1b[2K'); // clear the spinner line

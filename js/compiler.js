@@ -68,9 +68,27 @@ const Compiler = (() => {
     if (_clang) return _clang;
     Terminal.print('⟳ Fetching clang from Wasmer registry…', 'info');
     Terminal.print('  (first run downloads ~100 MB — cached afterwards)', 'info');
+    Terminal.print('  This can take 1–3 minutes on first use, please wait…', 'info');
     setStatus('spin', 'downloading clang…');
-    const { Wasmer } = window._WasmerSDK;
-    _clang = await Wasmer.fromRegistry('clang/clang');
+
+    // Animate a progress indicator in the terminal while we wait
+    const frames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
+    let fi = 0, elapsed = 0;
+    const timer = setInterval(() => {
+      elapsed++;
+      const mins = String(Math.floor(elapsed / 60)).padStart(1,'0');
+      const secs = String(elapsed % 60).padStart(2,'0');
+      Terminal.write(`\r\x1b[38;5;69m  ${frames[fi++ % frames.length]} downloading clang… ${mins}:${secs}\x1b[0m`);
+    }, 1000);
+
+    try {
+      const { Wasmer } = window._WasmerSDK;
+      _clang = await Wasmer.fromRegistry('clang/clang');
+    } finally {
+      clearInterval(timer);
+      Terminal.write('\r\x1b[2K'); // clear the spinner line
+    }
+
     Terminal.print('✓ clang ready.', 'success');
     return _clang;
   }

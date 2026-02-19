@@ -200,7 +200,22 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
   display: flex; align-items: center; gap: 6px;
   padding: 4px 8px; border-bottom: 1px solid var(--border); flex-shrink: 0;
 }
-#live-badge { font-size: 10px; color: var(--success); }
+#live-badge { font-size: 10px; color: var(--success); flex-shrink: 0; }
+#preview-url-wrap {
+  flex: 1; display: flex; align-items: center;
+  background: var(--bg); border: 1px solid var(--border2); border-radius: var(--r);
+  padding: 0 8px; gap: 4px; height: 26px;
+  transition: border-color .15s;
+}
+#preview-url-wrap:focus-within { border-color: var(--accent); }
+#preview-url-scheme { font-size: 11px; color: var(--dim); flex-shrink: 0; user-select: none; }
+#preview-url {
+  flex: 1; background: transparent; border: none; outline: none;
+  color: var(--text); font-family: var(--mono); font-size: 11px;
+}
+#preview-url::placeholder { color: rgba(102,102,128,.5); }
+#btn-devtools { flex-shrink: 0; }
+#btn-devtools.active { color: var(--accent); border-color: var(--accent); }
 #preview-frame { flex: 1; border: none; background: #fff; }
 
 #panel-stdin { flex: 1; display: flex; flex-direction: column; padding: 8px; gap: 6px; overflow: hidden; }

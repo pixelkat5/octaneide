@@ -56,9 +56,14 @@
       <div id="panel-preview" class="hidden">
         <div id="preview-bar">
           <span id="live-badge">⚡ live</span>
+          <div id="preview-url-wrap">
+            <span id="preview-url-scheme">about:</span>
+            <input id="preview-url" type="text" spellcheck="false" placeholder="preview or paste a URL…" />
+          </div>
+          <button class="hdr-btn" id="btn-devtools" title="Toggle DevTools"><i class="fa-solid fa-bug"></i></button>
           <button class="hdr-btn" id="btn-refresh" title="Refresh">↺</button>
         </div>
-        <iframe id="preview-frame" sandbox="allow-scripts allow-same-origin allow-modals"></iframe>
+        <iframe id="preview-frame" sandbox="allow-scripts allow-same-origin allow-modals allow-popups allow-forms"></iframe>
       </div>
       <div id="panel-stdin" class="hidden">
         <label>stdin — read by your program via cin / input()</label>

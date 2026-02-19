@@ -60,10 +60,14 @@
             <span id="preview-url-scheme">about:</span>
             <input id="preview-url" type="text" spellcheck="false" placeholder="preview or paste a URL…" />
           </div>
-          <button class="hdr-btn" id="btn-devtools" title="Toggle DevTools"><i class="fa-solid fa-bug"></i></button>
+          <button class="hdr-btn" id="btn-devtools" title="Toggle DevTools (Ctrl+Shift+I)"><i class="fa-solid fa-bug"></i></button>
           <button class="hdr-btn" id="btn-refresh" title="Refresh">↺</button>
         </div>
-        <iframe id="preview-frame" sandbox="allow-scripts allow-same-origin allow-modals allow-popups allow-forms"></iframe>
+        <div id="preview-split">
+          <iframe id="preview-frame" sandbox="allow-scripts allow-same-origin allow-modals allow-popups allow-forms"></iframe>
+          <div id="devtools-resize-handle" class="hidden"></div>
+          <iframe id="devtools-frame" class="hidden" allow="cross-origin-isolated"></iframe>
+        </div>
       </div>
       <div id="panel-stdin" class="hidden">
         <label>stdin — read by your program via cin / input()</label>
@@ -90,6 +94,7 @@
       <div class="sg"><div class="sg-title">Web Preview</div>
         <div class="sr"><label>Live reload</label><input type="checkbox" id="s-livereload" checked/></div>
         <div class="sr"><label>Reload delay</label><input type="range" id="s-delay" min="200" max="2000" step="100" value="600"/><span id="s-delay-val">600ms</span></div>
+        <div class="sr"><label>DevTools style</label><select id="s-devtools-flavor"><option value="chii">Chii (Chrome DevTools)</option><option value="eruda">Eruda (mobile-style)</option></select></div>
       </div>
       <div class="sg"><div class="sg-title">C++ Libraries <span class="sg-note">(cached offline)</span></div><div id="lib-list"></div></div>
       <div class="sg"><div class="sg-title">Python Packages <span class="sg-note">(via micropip · requires Python runtime)</span></div><div id="pypackage-list"></div></div>

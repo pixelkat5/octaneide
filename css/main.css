@@ -215,8 +215,23 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 }
 #preview-url::placeholder { color: rgba(102,102,128,.5); }
 #btn-devtools { flex-shrink: 0; }
-#btn-devtools.active { color: var(--accent); border-color: var(--accent); }
-#preview-frame { flex: 1; border: none; background: #fff; }
+#btn-devtools.active { color: var(--accent); border-color: var(--accent); background: rgba(124,106,255,.1); }
+
+/* preview + devtools split */
+#preview-split {
+  flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0;
+}
+#preview-frame { flex: 1; border: none; background: #fff; min-height: 0; }
+#devtools-resize-handle {
+  height: 5px; flex-shrink: 0; cursor: row-resize;
+  background: var(--border); transition: background .15s;
+}
+#devtools-resize-handle:hover, #devtools-resize-handle.dragging { background: var(--accent); }
+#devtools-frame {
+  height: 300px; flex-shrink: 0; border: none;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
 
 #panel-stdin { flex: 1; display: flex; flex-direction: column; padding: 8px; gap: 6px; overflow: hidden; }
 #panel-stdin label { font-size: 11px; color: var(--dim); }

@@ -171,7 +171,7 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 /* ── Output ── */
 #output-col {
   width: 380px; min-width: 180px; max-width: 80vw; flex-shrink: 0;
-  display: flex; flex-direction: column; overflow: hidden;
+  display: flex; flex-direction: column; overflow: hidden; min-height: 0;
   background: var(--surface);
 }
 #output-header {
@@ -192,10 +192,10 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 #exit-badge.ok  { color: var(--success); }
 #exit-badge.err { color: var(--err); }
 
-#panel-terminal { flex: 1; overflow: hidden; padding: 4px 2px; }
+#panel-terminal { flex: 1; overflow: hidden; padding: 4px 2px; min-height: 0; }
 #xterm-container { width: 100%; height: 100%; }
 
-#panel-preview { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+#panel-preview { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
 #preview-bar {
   display: flex; align-items: center; gap: 6px;
   padding: 4px 8px; border-bottom: 1px solid var(--border); flex-shrink: 0;
@@ -221,7 +221,7 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 #preview-split {
   flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0;
 }
-#preview-frame { flex: 1; border: none; background: #fff; min-height: 0; }
+#preview-frame { flex: 1; border: none; background: #fff; min-height: 0; width: 100%; display: block; }
 #devtools-resize-handle {
   height: 5px; flex-shrink: 0; cursor: row-resize;
   background: var(--border); transition: background .15s;

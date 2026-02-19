@@ -58,21 +58,23 @@ const Preview = (() => {
     const flavor = (State.settings.devtoolsFlavor) || 'chii';
 
     if (flavor === 'eruda') {
-      // Inject Eruda — self-contained floating devtools
-      html = html.replace('</body>',
+      // Inject Eruda — self-contained floating devtools, hidden until toggled
+      const erudaSnippet =
         `<script src="https://cdn.jsdelivr.net/npm/eruda@3/eruda.min.js"><\/script>` +
-        `<script>eruda.init();if(!window.__erudaVisible)eruda.hide();<\/script>\n</body>`);
+        `<script>eruda.init();eruda.hide();<\/script>`;
+      if (html.includes('</body>')) html = html.replace('</body>', erudaSnippet + '</body>');
+      else html += erudaSnippet;
     } else {
-      // Inject chobitsu for Chii — tiny CDP bridge, no UI in the page
-      html = html.replace('</head>',
+      // Inject chobitsu for Chii — pure CDP bridge, no visible UI
+      const chobitsuSnippet =
         `<script src="https://cdn.jsdelivr.net/npm/chobitsu"><\/script>` +
-        `<script>
-          // Bridge chobitsu ↔ parent window (Chii frontend)
-          chobitsu.setOnMessage(msg => window.parent.postMessage({ type:'cdp', data: msg }, '*'));
-          window.addEventListener('message', e => {
-            if (e.data && e.data.type === 'cdp') chobitsu.sendMessage(e.data.data);
-          });
-        <\/script>\n</head>`);
+        `<script>(function(){
+          chobitsu.setOnMessage(function(msg){ window.parent.postMessage({type:'cdp',data:msg},'*'); });
+          window.addEventListener('message', function(e){ if(e.data&&e.data.type==='cdp') chobitsu.sendMessage(e.data.data); });
+        })();<\/script>`;
+      if (html.includes('</head>')) html = html.replace('</head>', chobitsuSnippet + '</head>');
+      else if (html.includes('<body')) html = html.replace('<body', chobitsuSnippet + '<body');
+      else html = chobitsuSnippet + html;
     }
 
     return html;

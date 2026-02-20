@@ -50,8 +50,8 @@ const Compiler = (() => {
     setStatus('spin', 'loading Wasmer…');
 
     try {
-      const mod = await import('https://unpkg.com/@wasmer/sdk@latest/dist/index.mjs');
-      await mod.init({ token: 'wap_803dcea5adfa7402fbd765eb488d6bd54a0c6253ffdc8fd0945df6c2be4e7c5a' });
+      const mod = await import('./vendor/wasmer/index.mjs');
+      await mod.init({ token: 'wap_803dcea5adfa7402fbd765eb488d6bd54a0c6253ffdc8fd0945df6c2be4e7c5a', module: './vendor/wasmer/wasmer_js_bg.wasm' });
       window._WasmerSDK = mod;
       _wasmerReady = true;
       Terminal.print('✓ Wasmer SDK ready.', 'success');
@@ -106,15 +106,16 @@ const Compiler = (() => {
     Terminal.print(`$ ${isCpp ? 'clang++' : 'clang'} ${entry} ${State.settings.std} ${State.settings.opt}`, 'cmd');
     setStatus('spin', 'compiling…');
 
+    // Try local server first (fast, works offline)
+    const serverOk = await runCppServer(entry, isCpp);
+    if (serverOk) return;
+
+    // Fall back to Wasmer in-browser compile
+    Terminal.print('⟳ No local server — trying in-browser compile…', 'info');
     const wasmerOk = await ensureWasmer();
     if (wasmerOk) {
-      const handled = await runCppWasmer(entry, isCpp);
-      if (handled) return;
+      await runCppWasmer(entry, isCpp);
     }
-
-    // Fallback to local server
-    Terminal.print('⚠ Falling back to local compile server…', 'warn');
-    await runCppServer(entry, isCpp);
   }
 
   // ── Wasmer in-browser compile ──
@@ -221,7 +222,9 @@ const Compiler = (() => {
     }
   }
 
-  // ── Local server fallback ──
+  // ── Local server (primary offline path) ──
+  // Returns true if server handled the request (success or compile error),
+  // false if the server isn't running at all.
   async function runCppServer(entry, isCpp) {
     const filesToSend = { ...State.files };
     for (const id of State.settings.downloadedLibs) {
@@ -239,11 +242,10 @@ const Compiler = (() => {
       if (!r.ok) throw new Error('HTTP ' + r.status);
       result = await r.json();
     } catch (e) {
-      Terminal.print('✗ No compile server found either.', 'stderr');
-      Terminal.print('  On Cloudflare/GitHub Pages, Wasmer handles compilation.', 'info');
-      Terminal.print('  Locally, run: python server.py', 'info');
-      setStatus('err', 'offline'); setExit(1); return;
+      // Server not running — signal caller to try Wasmer
+      return false;
     }
+    Terminal.print('$ (server.py) ' + (isCpp ? 'clang++' : 'clang') + ' ' + entry, 'cmd');
 
     if (result.stderr) Terminal.write('\x1b[38;5;203m' + result.stderr.replace(/\n/g, '\r\n') + '\x1b[0m\r\n');
     if (!result.success) {
@@ -265,6 +267,7 @@ const Compiler = (() => {
       exitCode = await runWasmInline(wasmBytes, stdin);
     }
     setExit(exitCode); setStatus('ok', 'ready');
+    return true;
   }
 
   // ── Interactive WASM via Web Worker + SharedArrayBuffer ──
@@ -452,16 +455,55 @@ const Compiler = (() => {
     Terminal.print('─────────────────────────────', 'info');
     setStatus('spin', 'running…');
     const py = window._pyodide;
-    py.runPython(`import sys,io\nsys.stdout=io.StringIO()\nsys.stderr=io.StringIO()`);
+
+    // Redirect stdout/stderr to StringIO so we can flush them between input() calls.
+    // input() is patched to: flush pending output → print prompt → read a line from
+    // the terminal interactively (same mechanism C++ uses).
+    py.runPython(`import sys, io, builtins
+sys.stdout = io.StringIO()
+sys.stderr = io.StringIO()`);
+
+    // Helper: flush Python's StringIO stdout to the terminal right now.
+    const flushOut = () => {
+      try {
+        const out = py.runPython('sys.stdout.getvalue()');
+        if (out) {
+          py.runPython('sys.stdout.truncate(0); sys.stdout.seek(0)');
+          Terminal.write(out.replace(/\n/g, '\r\n'));
+        }
+      } catch(_) {}
+    };
+
+    // Each call to _pyInputFn returns a Promise that resolves with the typed line.
+    // Pyodide's runPythonAsync will await JS promises returned from Python via js.globalThis,
+    // so this gives us true async terminal input without blocking the main thread.
+    window._pyInputFn = (prompt) => new Promise(resolve => {
+      flushOut();
+      if (prompt) Terminal.write(String(prompt));
+      Terminal.readLine(resolve);
+    });
+
+    // Pyodide's runPythonAsync can await JS Promises returned from async Python functions.
+    // We define input() as an async def so that 'await input()' works in user code,
+    // and plain 'input()' also works because runPythonAsync handles top-level awaits.
+    py.runPython(`import js, builtins
+async def _js_input(prompt=''):
+    result = await js.globalThis._pyInputFn(str(prompt) if prompt else '')
+    return str(result).rstrip('\\n')
+builtins.input = _js_input`);
+
     try {
       await py.runPythonAsync(State.files[State.activeFile]);
-      const out = py.runPython('sys.stdout.getvalue()');
+      flushOut();
       const err = py.runPython('sys.stderr.getvalue()');
-      if (out) Terminal.write(out.replace(/\n/g,'\r\n'));
-      if (err) Terminal.write('\x1b[38;5;203m'+err.replace(/\n/g,'\r\n')+'\x1b[0m');
+      if (err) Terminal.write('\x1b[38;5;203m' + err.replace(/\n/g, '\r\n') + '\x1b[0m');
       setExit(0);
-    } catch(e) { Terminal.write('\x1b[38;5;203m'+e.message+'\x1b[0m\r\n'); setExit(1); }
-    setStatus('ok','Python ready');
+    } catch(e) {
+      flushOut();
+      Terminal.write('\x1b[38;5;203m' + e.message + '\x1b[0m\r\n');
+      setExit(1);
+    }
+    setStatus('ok', 'Python ready');
   }
 
   // ── init ──

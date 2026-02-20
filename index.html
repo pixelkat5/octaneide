@@ -46,7 +46,7 @@
         <div id="output-tabs">
           <button class="o-tab active" data-panel="terminal">terminal</button>
           <button class="o-tab" data-panel="preview">preview</button>
-          <button class="o-tab" data-panel="stdin">stdin</button>
+
         </div>
         <div class="spacer"></div>
         <span id="exit-badge"></span>
@@ -65,35 +65,48 @@
         </div>
         <iframe id="preview-frame" sandbox="allow-scripts allow-same-origin allow-modals allow-popups allow-forms"></iframe>
       </div>
-      <div id="panel-stdin" class="hidden">
-        <label>stdin — read by your program via cin / input()</label>
-        <textarea id="stdin-input" spellcheck="false" placeholder="type stdin here…"></textarea>
-      </div>
+
     </div>
   </div>
 </div>
 <div id="settings-overlay" class="hidden">
   <div id="settings-modal">
-    <div id="settings-head"><span>Settings</span><button id="btn-close-settings">✕</button></div>
-    <div id="settings-body">
-      <div class="sg"><div class="sg-title">Editor</div>
-        <div class="sr"><label>Font size</label><input type="range" id="s-fontsize" min="10" max="24" value="13"/><span id="s-fontsize-val">13px</span></div>
-        <div class="sr"><label>Theme</label><select id="s-theme"><option value="vs-dark">Dark</option><option value="vs">Light</option><option value="hc-black">High contrast</option></select></div>
-        <div class="sr"><label>Word wrap</label><input type="checkbox" id="s-wordwrap"/></div>
+    <div id="settings-head">
+      <div id="settings-search-wrap">
+        <i id="settings-search-icon" class="fa-solid fa-magnifying-glass"></i>
+        <input id="settings-search" type="text" placeholder="Search settings…" autocomplete="off" spellcheck="false"/>
       </div>
-      <div class="sg"><div class="sg-title">C / C++ Compiler</div>
-        <div class="sr"><label>Standard</label><select id="s-std"><option value="-std=c++23">C++23</option><option value="-std=c++20">C++20</option><option value="-std=c++17" selected>C++17</option><option value="-std=c++14">C++14</option><option value="-std=c++11">C++11</option><option value="-std=c11">C11</option><option value="-std=c99">C99</option></select></div>
-        <div class="sr"><label>Optimization</label><select id="s-opt"><option value="-O0">-O0 none</option><option value="-O1" selected>-O1 basic</option><option value="-O2">-O2 moderate</option><option value="-O3">-O3 aggressive</option><option value="-Os">-Os size</option></select></div>
-        <div class="sr"><label>Extra flags</label><input type="text" id="s-flags" placeholder="-Wall -Wextra"/></div>
-        <div class="sr"><label>Interactive stdin</label><input type="checkbox" id="s-interactive-stdin" checked/><span style="font-size:11px;color:var(--dim);margin-left:6px">type input in terminal as program runs</span></div>
+      <button id="btn-close-settings">✕</button>
+    </div>
+    <div id="settings-layout">
+      <nav id="settings-nav">
+        <div class="snav-item active" data-cat="editor"><i class="fa-solid fa-pen-nib"></i> Editor</div>
+        <div class="snav-item" data-cat="cpp"><i class="fa-solid fa-code"></i> C / C++</div>
+        <div class="snav-item" data-cat="python"><i class="fa-brands fa-python"></i> Python</div>
+        <div class="snav-item" data-cat="web"><i class="fa-solid fa-globe"></i> Web Preview</div>
+        <div class="snav-item" data-cat="libs"><i class="fa-solid fa-box-archive"></i> Libraries</div>
+        <div class="snav-item" data-cat="runtimes"><i class="fa-solid fa-microchip"></i> Runtimes</div>
+      </nav>
+      <div id="settings-body">
+        <div class="sg" data-cat="editor"><div class="sg-title">Editor</div>
+          <div class="sr" data-label="font size"><label>Font size</label><input type="range" id="s-fontsize" min="10" max="24" value="13"/><span id="s-fontsize-val">13px</span></div>
+          <div class="sr" data-label="theme dark light high contrast"><label>Theme</label><select id="s-theme"><option value="vs-dark">Dark</option><option value="vs">Light</option><option value="hc-black">High contrast</option></select></div>
+          <div class="sr" data-label="word wrap line wrap"><label>Word wrap</label><input type="checkbox" id="s-wordwrap"/></div>
+        </div>
+        <div class="sg" data-cat="cpp"><div class="sg-title">C / C++ Compiler</div>
+          <div class="sr" data-label="c++ standard version c11 c99 c++17 c++20 c++23"><label>Standard</label><select id="s-std"><option value="-std=c++23">C++23</option><option value="-std=c++20">C++20</option><option value="-std=c++17" selected>C++17</option><option value="-std=c++14">C++14</option><option value="-std=c++11">C++11</option><option value="-std=c11">C11</option><option value="-std=c99">C99</option></select></div>
+          <div class="sr" data-label="optimization o0 o1 o2 o3 speed"><label>Optimization</label><select id="s-opt"><option value="-O0">-O0 none</option><option value="-O1" selected>-O1 basic</option><option value="-O2">-O2 moderate</option><option value="-O3">-O3 aggressive</option><option value="-Os">-Os size</option></select></div>
+          <div class="sr" data-label="extra flags wall wextra compiler flags"><label>Extra flags</label><input type="text" id="s-flags" placeholder="-Wall -Wextra"/></div>
+          <div class="sr" data-label="interactive stdin input terminal"><label>Interactive stdin</label><input type="checkbox" id="s-interactive-stdin" checked/><span class="sr-hint">type input in terminal as program runs</span></div>
+        </div>
+        <div class="sg" data-cat="python"><div class="sg-title">Python Packages <span class="sg-note">(via micropip · requires Python runtime)</span></div><div id="pypackage-list"></div></div>
+        <div class="sg" data-cat="web"><div class="sg-title">Web Preview</div>
+          <div class="sr" data-label="live reload auto refresh"><label>Live reload</label><input type="checkbox" id="s-livereload" checked/></div>
+          <div class="sr" data-label="reload delay ms speed"><label>Reload delay</label><input type="range" id="s-delay" min="200" max="2000" step="100" value="600"/><span id="s-delay-val">600ms</span></div>
+        </div>
+        <div class="sg" data-cat="libs"><div class="sg-title">C++ Libraries <span class="sg-note">(cached offline)</span></div><div id="lib-list"></div></div>
+        <div class="sg" data-cat="runtimes"><div class="sg-title">Runtimes <span class="sg-note">(download once)</span></div><div id="runtime-list"></div></div>
       </div>
-      <div class="sg"><div class="sg-title">Web Preview</div>
-        <div class="sr"><label>Live reload</label><input type="checkbox" id="s-livereload" checked/></div>
-        <div class="sr"><label>Reload delay</label><input type="range" id="s-delay" min="200" max="2000" step="100" value="600"/><span id="s-delay-val">600ms</span></div>
-      </div>
-      <div class="sg"><div class="sg-title">C++ Libraries <span class="sg-note">(cached offline)</span></div><div id="lib-list"></div></div>
-      <div class="sg"><div class="sg-title">Python Packages <span class="sg-note">(via micropip · requires Python runtime)</span></div><div id="pypackage-list"></div></div>
-      <div class="sg"><div class="sg-title">Runtimes <span class="sg-note">(download once)</span></div><div id="runtime-list"></div></div>
     </div>
   </div>
 </div>

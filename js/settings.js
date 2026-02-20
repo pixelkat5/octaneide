@@ -5,6 +5,49 @@ const Settings = (() => {
   function open()  { overlay.classList.remove('hidden'); renderLibs(); renderPyPackages(); renderRuntimes(); }
   function close() { overlay.classList.add('hidden'); }
 
+  let _activeCategory = 'editor';
+
+  function _activateCategory(cat) {
+    _activeCategory = cat;
+    document.querySelectorAll('.snav-item').forEach(el => el.classList.toggle('active', el.dataset.cat === cat));
+    document.querySelectorAll('#settings-body .sg[data-cat]').forEach(el => {
+      el.style.display = el.dataset.cat === cat ? '' : 'none';
+    });
+    // clear search when switching category manually
+    const s = document.getElementById('settings-search');
+    if (s) s.value = '';
+    _applySearch('');
+  }
+
+  function _applySearch(q) {
+    q = q.toLowerCase().trim();
+    if (!q) {
+      // restore normal category view
+      document.querySelectorAll('#settings-body .sg[data-cat]').forEach(el => {
+        el.style.display = el.dataset.cat === _activeCategory ? '' : 'none';
+      });
+      document.querySelectorAll('.snav-item').forEach(el => el.classList.remove('hidden-cat'));
+      return;
+    }
+    // Search mode: show all matching rows across all categories
+    const catsWithMatches = new Set();
+    document.querySelectorAll('#settings-body .sg[data-cat]').forEach(sg => {
+      let sgHasMatch = false;
+      sg.querySelectorAll('.sr[data-label]').forEach(sr => {
+        const lbl = sr.dataset.label || '';
+        const text = sr.innerText || '';
+        const match = lbl.includes(q) || text.toLowerCase().includes(q);
+        sr.style.display = match ? '' : 'none';
+        if (match) { sgHasMatch = true; catsWithMatches.add(sg.dataset.cat); }
+      });
+      sg.style.display = sgHasMatch ? '' : 'none';
+    });
+    // Update nav: dim categories with no matches
+    document.querySelectorAll('.snav-item').forEach(el => {
+      el.classList.toggle('hidden-cat', !catsWithMatches.has(el.dataset.cat));
+    });
+  }
+
   function init() {
     // apply saved values
     document.getElementById('s-fontsize').value = State.settings.fontSize;
@@ -37,6 +80,17 @@ const Settings = (() => {
     document.getElementById('s-interactive-stdin').onchange = e => { State.settings.interactiveStdin = e.target.checked; Persist.saveSettings(); };
     document.getElementById('s-wordwrap').onchange = e => { State.settings.wordWrap = e.target.checked; Editor.applySettings(); Persist.saveSettings(); };
 
+    // Sidebar nav
+    document.querySelectorAll('.snav-item').forEach(el => {
+      el.addEventListener('click', () => _activateCategory(el.dataset.cat));
+    });
+
+    // Search
+    document.getElementById('settings-search').addEventListener('input', e => _applySearch(e.target.value));
+
+    // Init to first category
+    _activateCategory('editor');
+
     document.getElementById('btn-settings').onclick = open;
     document.getElementById('btn-close-settings').onclick = close;
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
@@ -61,6 +115,36 @@ const Settings = (() => {
     const el = document.getElementById('pypackage-list');
     if (!el) return;
     el.innerHTML = '';
+
+    // Custom package install row
+    const custom = document.createElement('div');
+    custom.className = 'lib-row py-custom-row';
+    custom.innerHTML = `
+      <input class="py-custom-input" type="text" placeholder="package name (e.g. flask)" spellcheck="false" autocomplete="off"/>
+      <button class="lib-btn py-custom-btn">↓ install</button>`;
+    const input = custom.querySelector('.py-custom-input');
+    const btn   = custom.querySelector('.py-custom-btn');
+    const doInstall = async () => {
+      const name = input.value.trim();
+      if (!name) return;
+      if (!window._pyodide) { Terminal.print('⚠  Load the Python runtime first (Runtimes section).', 'warn'); return; }
+      btn.textContent = '⟳ installing…'; btn.className = 'lib-btn loading'; btn.disabled = true;
+      try {
+        await window._pyodide.loadPackagesFromImports('import micropip');
+        await window._pyodide.runPythonAsync(`import micropip\nawait micropip.install('${name.replace(/'/g, '')}')`);
+        btn.textContent = '✓ installed'; btn.className = 'lib-btn done';
+        Terminal.print(`✓ ${name} installed.`, 'success');
+        setTimeout(() => { btn.textContent = '↓ install'; btn.className = 'lib-btn'; btn.disabled = false; input.value = ''; }, 2000);
+      } catch(e) {
+        btn.textContent = '✗ failed'; btn.className = 'lib-btn';
+        Terminal.print(`✗ Failed to install ${name}: ${e.message}`, 'stderr');
+        setTimeout(() => { btn.textContent = '↓ install'; btn.className = 'lib-btn'; btn.disabled = false; }, 2000);
+      }
+    };
+    btn.onclick = doInstall;
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') doInstall(); });
+    el.appendChild(custom);
+
     for (const pkg of PYTHON_PACKAGES) {
       const done = State.settings.installedPyPackages && State.settings.installedPyPackages.includes(pkg.id);
       const row  = document.createElement('div'); row.className = 'lib-row';

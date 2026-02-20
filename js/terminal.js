@@ -113,5 +113,34 @@ const Terminal = (() => {
     });
   }
 
-  return { init, clear, print, write, startInteractiveInput, stopInteractiveInput, promptStdin };
+  // ── Read a single line from the terminal (for Python input()) ──
+  // Calls resolve(line) when the user presses Enter. No framing text.
+  function readLine(resolve) {
+    if (!State.term) { resolve(''); return; }
+    let line = '';
+    const disposable = State.term.onData(data => {
+      for (const ch of data) {
+        const code = ch.charCodeAt(0);
+        if (code === 13 || ch === '\n') {
+          State.term.write('\r\n');
+          disposable.dispose();
+          resolve(line + '\n');
+          return;
+        } else if (code === 127 || code === 8) {
+          if (line.length > 0) { line = line.slice(0, -1); State.term.write('\b \b'); }
+        } else if (code === 3) {
+          // Ctrl+C — resolve with empty, let program deal with it
+          State.term.write('^C\r\n');
+          disposable.dispose();
+          resolve('');
+          return;
+        } else if (code >= 32) {
+          line += ch;
+          State.term.write(ch);
+        }
+      }
+    });
+  }
+
+  return { init, clear, print, write, startInteractiveInput, stopInteractiveInput, promptStdin, readLine };
 })();

@@ -129,9 +129,10 @@ function updateRunInfo() {
 
 function showPanel(name) {
   document.querySelectorAll('.o-tab').forEach(t => t.classList.toggle('active', t.dataset.panel === name));
-  document.getElementById('panel-terminal').classList.toggle('hidden', name !== 'terminal');
-  document.getElementById('panel-preview').classList.toggle('hidden', name !== 'preview');
-  document.getElementById('panel-stdin').classList.toggle('hidden', name !== 'stdin');
+  ['terminal', 'preview'].forEach(p => {
+    const el = document.getElementById('panel-' + p);
+    if (el) el.classList.toggle('hidden', name !== p);
+  });
   State.activePanel = name;
   if (name === 'terminal' && State.fitAddon) State.fitAddon.fit();
 }

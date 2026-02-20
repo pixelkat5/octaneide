@@ -83,8 +83,8 @@ document.addEventListener('keydown', e => {
 // ── Service Worker ────────────────────────────────────────────
 if ('serviceWorker' in navigator) {
   const sw = `
-const C='polyide2-v5';
-const PRECACHE=['./','./index.html','./manifest.json','./css/main.css','./vendor/fonts/fonts.css','./vendor/eruda/eruda.min.js','./vendor/xterm/xterm.css','./vendor/xterm/xterm.js','./vendor/xterm/xterm-addon-fit.js','./vendor/wasmer/index.mjs','./vendor/wasmer/wasmer_js_bg.wasm','./js/state.js','./js/persist.js','./js/filetree.js','./js/editor.js','./js/terminal.js','./js/preview.js','./js/compiler.js','./js/settings.js','./js/main.js'];
+const C='polyide2-v6';
+const PRECACHE=['./','./index.html','./manifest.json','./css/main.css','./vendor/fonts/fonts.css','./vendor/eruda/eruda.min.js','./vendor/xterm/xterm.css','./vendor/xterm/xterm.js','./vendor/xterm/xterm-addon-fit.js','./vendor/wasmer/WasmerSDKBundled.js','./js/state.js','./js/persist.js','./js/filetree.js','./js/editor.js','./js/terminal.js','./js/preview.js','./js/compiler.js','./js/settings.js','./js/main.js'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(C).then(cache=>Promise.allSettled(PRECACHE.map(u=>cache.add(u)))));self.skipWaiting();});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==C).map(k=>caches.delete(k)))));self.clients.claim();});
 self.addEventListener('fetch',e=>{e.respondWith(caches.match(e.request).then(r=>{if(r)return r;return fetch(e.request).then(resp=>{if(resp.ok&&(e.request.url.includes('unpkg')||e.request.url.includes('cdnjs')||e.request.url.includes('wasmer.io')||e.request.url.includes('wasmer.wtf')||e.request.url.includes('jsdelivr')||e.request.url.includes('pyodide'))){const cl=resp.clone();caches.open(C).then(c=>c.put(e.request,cl));}return resp;}).catch(()=>new Response('Offline',{status:503}));})});});

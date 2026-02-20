@@ -158,15 +158,18 @@ const Compiler = (() => {
 
       const data = await resp.json();
 
-      // ── Extract output ──
-      // Godbolt returns build errors separately in buildResult vs asm stderr
+      if (State.settings.showDevErrors) console.log('[Godbolt response]', JSON.stringify(data).slice(0, 2000));
+
+      // ── Extract compile diagnostics ──
+      // Godbolt executor mode puts diagnostics in buildResult.stderr
+      // Non-executor mode puts them in data.stderr
       const buildStderr   = (data.buildResult?.stderr || []).map(l => l.text || '').join('\n').trim();
       const compileStderr = (data.stderr || []).map(l => l.text || '').join('\n').trim();
       const compileErrors = buildStderr || compileStderr;
 
-      if (compileErrors) {
-        // Pretty-print: highlight error/warning lines
-        compileErrors.split('\n').forEach(line => {
+      function printDiagnostics(text) {
+        text.split('\n').forEach(line => {
+          if (!line) return;
           const isError = /\berror\b/i.test(line);
           const isWarn  = /\bwarning\b/i.test(line);
           if (isError)     Terminal.write('\x1b[38;5;203m' + line + '\x1b[0m\r\n');
@@ -175,26 +178,37 @@ const Compiler = (() => {
         });
       }
 
-      // Check if compilation succeeded
-      const buildCode  = data.buildResult?.exitCode ?? data.code ?? 0;
-      const didExecute = data.execResult !== undefined;
+      // ── Determine build success ──
+      // buildResult.exitCode is most reliable; fall back to data.code
+      const buildCode = data.buildResult?.exitCode ?? data.code ?? 0;
 
-      if (buildCode !== 0 || !didExecute) {
-        if (!compileErrors) Terminal.print('✗ Compilation failed (exit ' + buildCode + ').', 'stderr');
-        setExit(buildCode || 1); setStatus('ok', 'ready'); return;
+      // In executor mode the response has an execResult block.
+      // In some Godbolt versions it's at data.execResult, in others at data.buildResult.execResult
+      const execResult = data.execResult ?? data.buildResult?.execResult ?? null;
+
+      if (buildCode !== 0) {
+        // Compile error
+        if (compileErrors) printDiagnostics(compileErrors);
+        else Terminal.print('✗ Compilation failed (exit ' + buildCode + ').', 'stderr');
+        setExit(buildCode); setStatus('ok', 'ready'); return;
       }
 
-      const execResult  = data.execResult;
-      const execExitCode = execResult?.exitCode ?? 0;
-      const stdout       = (execResult?.stdout || []).map(l => l.text || '').join('\n');
-      const execStderr   = (execResult?.stderr || []).map(l => l.text || '').join('\n').trim();
+      // Build succeeded — print any warnings
+      if (compileErrors) printDiagnostics(compileErrors);
 
-      if (compileErrors && buildCode === 0) {
-        // Only warnings — still compiled
-        Terminal.print('⚠ Compiled with warnings:', 'warn');
-      } else {
-        Terminal.print('✓ Compiled — output:', 'success');
+      if (!execResult) {
+        // Compiled OK but Godbolt didn't execute (shouldn't happen with executorRequest:true,
+        // but handle gracefully — show asm or just confirm compile success)
+        Terminal.print('✓ Compiled successfully (no execution result returned by Godbolt).', 'success');
+        Terminal.print('  If you expected output, check Settings → C/C++ → Compiler backend.', 'info');
+        setExit(0); setStatus('ok', 'ready'); return;
       }
+
+      const execExitCode = execResult.exitCode ?? 0;
+      const stdout       = (execResult.stdout || []).map(l => l.text ?? '').join('\n');
+      const execStderr   = (execResult.stderr || []).map(l => l.text ?? '').join('\n').trim();
+
+      Terminal.print(compileErrors ? '⚠ Compiled with warnings — output:' : '✓ Compiled — output:', compileErrors ? 'warn' : 'success');
 
       if (stdout) {
         Terminal.write('\x1b[0m' + stdout.replace(/\n/g, '\r\n'));
@@ -207,9 +221,8 @@ const Compiler = (() => {
         Terminal.print('(no output)', 'info');
       }
 
-      const stdinNote = needsInput ? '' : '';
       Terminal.print(
-        `─── exit ${execExitCode} · ran on godbolt.org${needsInput ? ' · stdin was pre-collected' : ''} ───`,
+        `─── exit ${execExitCode} · ran on godbolt.org${needsInput ? ' · stdin pre-collected' : ''} ───`,
         execExitCode === 0 ? 'info' : 'warn'
       );
       setExit(execExitCode); setStatus('ok', 'ready');

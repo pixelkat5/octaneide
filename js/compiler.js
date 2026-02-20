@@ -48,7 +48,7 @@ const Compiler = (() => {
   // ── Load Wasmer SDK (lazy, once) ──
   // Loaded from unpkg (the SDK's intended delivery method).
   // The service worker caches it after first load so subsequent uses are offline-capable.
-  const WASMER_URL = 'https://unpkg.com/@wasmer/sdk@0.8.0-beta.1/dist/index.mjs';
+  const WASMER_URL = '/vendor/wasmer/WasmerSDKBundled.js';
 
   async function ensureWasmer() {
     if (_wasmerReady)  return true;

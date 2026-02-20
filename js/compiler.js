@@ -54,8 +54,8 @@ const Compiler = (() => {
     setStatus('spin', 'loading Wasmer…');
 
     try {
-      const mod = await import('./vendor/wasmer/WasmerSDKBundled.js');
-      await mod.init({ token: 'wap_803dcea5adfa7402fbd765eb488d6bd54a0c6253ffdc8fd0945df6c2be4e7c5a', workerUrl: './vendor/wasmer/WasmerSDKBundled.js' });
+      const mod = await import('../vendor/wasmer/WasmerSDKBundled.js');
+      await mod.init({ token: 'wap_803dcea5adfa7402fbd765eb488d6bd54a0c6253ffdc8fd0945df6c2be4e7c5a', workerUrl: '../vendor/wasmer/WasmerSDKBundled.js' });
       window._WasmerSDK = mod;
       _wasmerReady = true;
       Terminal.print('✓ Wasmer SDK ready.', 'success');

@@ -10,32 +10,22 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // Pass everything else to static assets
     if (url.pathname !== "/wasmer-graphql") {
       return env.ASSETS.fetch(request);
     }
 
-    // CORS preflight
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: corsHeaders(request) });
     }
 
-    // Read body as text so we can forward it cleanly
-    const body = request.method !== "GET" && request.method !== "HEAD"
-      ? await request.text()
-      : undefined;
-
-    // Build clean headers — strip user-agent, set correct host and content-type
-    const headers = new Headers();
-    headers.set("host", "registry.wasmer.io");
-    headers.set("content-type", request.headers.get("content-type") || "application/json");
-    const auth = request.headers.get("authorization");
-    if (auth) headers.set("authorization", auth);
-
+    // Forward the request body as a raw stream — don't touch it
     const response = await fetch(TARGET, {
       method:  request.method,
-      headers: headers,
-      body:    body,
+      headers: {
+        "content-type": "application/json",
+        "host":         "registry.wasmer.io",
+      },
+      body: request.body,
     });
 
     const responseHeaders = new Headers(response.headers);

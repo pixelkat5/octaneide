@@ -65,26 +65,8 @@ const Compiler = (() => {
       window.fetch = function(input, init) {
         const url = (typeof input === 'string') ? input : input.url;
         if (url && url.includes('registry.wasmer.io')) {
-          // Clone the request to avoid body-already-consumed errors
-          if (input instanceof Request) {
-            const clone = input.clone();
-            const headers = new Headers(clone.headers);
-            headers.delete('user-agent');
-            headers.delete('User-Agent');
-            input = new Request('/wasmer-graphql', {
-              method:  clone.method,
-              headers: headers,
-              body:    clone.body,
-              mode:    'same-origin',
-            });
-            init = undefined;
-          } else {
-            const headers = new Headers((init && init.headers) || {});
-            headers.delete('user-agent');
-            headers.delete('User-Agent');
-            input = '/wasmer-graphql';
-            init  = { ...(init || {}), headers, mode: 'same-origin' };
-          }
+          // Rewrite URL to our same-origin proxy — worker forwards body as-is
+          input = '/wasmer-graphql';
         }
         return _origFetch.call(this, input, init);
       };

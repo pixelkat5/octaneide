@@ -97,13 +97,59 @@
         <div id="output-tabs">
           <button class="o-tab active" data-panel="terminal">terminal</button>
           <button class="o-tab" data-panel="preview">preview</button>
-
+          <button class="o-tab" data-panel="git">git</button>
         </div>
         <div class="spacer"></div>
         <span id="exit-badge"></span>
         <button class="hdr-btn" id="btn-clear" title="Clear">⌫</button>
       </div>
       <div id="panel-terminal"><div id="xterm-container"></div></div>
+      <div id="panel-git" class="hidden">
+        <div id="git-panel">
+          <div id="git-header">
+            <span id="git-branch-wrap"><i class="fa-solid fa-code-branch"></i> <span id="git-branch-name">…</span></span>
+            <button class="git-icon-btn" id="git-btn-refresh" title="Refresh status"><i class="fa-solid fa-rotate"></i></button>
+          </div>
+
+          <div id="git-status-section">
+            <div class="git-section-title">Changes <button class="git-small-btn" id="git-btn-stage-all" title="Stage all">stage all</button></div>
+            <div id="git-status-list"><div class="git-dim" style="padding:6px 0">loading…</div></div>
+          </div>
+
+          <div id="git-commit-section">
+            <div class="git-section-title">Commit</div>
+            <input id="git-commit-msg" type="text" placeholder="Commit message…" spellcheck="false" autocomplete="off"/>
+            <div id="git-commit-btns">
+              <button class="git-action-btn" id="git-btn-commit"><i class="fa-solid fa-check"></i> Commit</button>
+              <button class="git-action-btn" id="git-btn-push"><i class="fa-solid fa-arrow-up"></i> Push</button>
+              <button class="git-action-btn" id="git-btn-pull"><i class="fa-solid fa-arrow-down"></i> Pull</button>
+            </div>
+          </div>
+
+          <div id="git-quick-section">
+            <div class="git-section-title">Quick actions</div>
+            <div id="git-quick-btns">
+              <button class="git-small-btn" id="git-btn-log">log</button>
+              <button class="git-small-btn" id="git-btn-diff">diff</button>
+            </div>
+          </div>
+
+          <div id="git-cmd-section">
+            <div class="git-section-title">Run command</div>
+            <div id="git-cmd-row">
+              <span class="git-cmd-prefix">git</span>
+              <input id="git-cmd-input" type="text" placeholder="status -s" spellcheck="false" autocomplete="off"/>
+              <button class="git-icon-btn" id="git-btn-run-cmd"><i class="fa-solid fa-play"></i></button>
+            </div>
+          </div>
+
+          <div id="git-output-section">
+            <div class="git-section-title">Output</div>
+            <div id="git-output"></div>
+          </div>
+        </div>
+      </div>
+
       <div id="panel-preview" class="hidden">
         <div id="preview-bar">
           <span id="live-badge">⚡ live</span>
@@ -221,6 +267,7 @@
 <script src="js/preview.js" defer></script>
 <script src="js/compiler.js" defer></script>
 <script src="js/settings.js" defer></script>
+<script src="js/git.js" defer></script>
 <script src="js/main.js" defer></script>
 </body>
 </html>

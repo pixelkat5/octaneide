@@ -19,10 +19,12 @@ const State = {
     flags:       '-Wall',
     liveReload:  true,
     reloadDelay: 600,
+    cppBackend:       'browsercc',
     interactiveStdin: true,
     wordWrap:         false,
     downloadedLibs:     [],
     downloadedRuntimes: [],
+    showDevErrors: false,
   },
 };
 

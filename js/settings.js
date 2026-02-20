@@ -53,6 +53,7 @@ const Settings = (() => {
     document.getElementById('s-fontsize').value = State.settings.fontSize;
     document.getElementById('s-fontsize-val').textContent = State.settings.fontSize + 'px';
     document.getElementById('s-theme').value = State.settings.theme;
+    document.getElementById('s-cpp-backend').value = State.settings.cppBackend || 'browsercc';
     document.getElementById('s-std').value = State.settings.std;
     document.getElementById('s-opt').value = State.settings.opt;
     document.getElementById('s-flags').value = State.settings.flags;
@@ -61,13 +62,15 @@ const Settings = (() => {
     document.getElementById('s-delay-val').textContent = State.settings.reloadDelay + 'ms';
     document.getElementById('s-interactive-stdin').checked = State.settings.interactiveStdin;
     document.getElementById('s-wordwrap').checked = State.settings.wordWrap;
+    document.getElementById('s-deverrors').checked = State.settings.showDevErrors;
 
     document.getElementById('s-fontsize').oninput = e => {
       State.settings.fontSize = parseInt(e.target.value);
       document.getElementById('s-fontsize-val').textContent = e.target.value + 'px';
       Editor.applySettings(); Persist.saveSettings();
     };
-    document.getElementById('s-theme').onchange = e => { State.settings.theme = e.target.value; Editor.applySettings(); Persist.saveSettings(); };
+    document.getElementById('s-theme').onchange      = e => { State.settings.theme      = e.target.value; Editor.applySettings(); Persist.saveSettings(); };
+    document.getElementById('s-cpp-backend').onchange = e => { State.settings.cppBackend = e.target.value; Persist.saveSettings(); };
     document.getElementById('s-std').onchange    = e => { State.settings.std   = e.target.value; Persist.saveSettings(); };
     document.getElementById('s-opt').onchange    = e => { State.settings.opt   = e.target.value; Persist.saveSettings(); };
     document.getElementById('s-flags').oninput   = e => { State.settings.flags = e.target.value; Persist.saveSettings(); };
@@ -79,6 +82,7 @@ const Settings = (() => {
     };
     document.getElementById('s-interactive-stdin').onchange = e => { State.settings.interactiveStdin = e.target.checked; Persist.saveSettings(); };
     document.getElementById('s-wordwrap').onchange = e => { State.settings.wordWrap = e.target.checked; Editor.applySettings(); Persist.saveSettings(); };
+    document.getElementById('s-deverrors').onchange = e => { State.settings.showDevErrors = e.target.checked; Persist.saveSettings(); };
 
     // Sidebar nav
     document.querySelectorAll('.snav-item').forEach(el => {

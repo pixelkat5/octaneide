@@ -8,10 +8,14 @@ const Editor = (() => {
     window.MonacoEnvironment = {
       baseUrl: '/vendor/monaco/',
       getWorkerUrl: function(_moduleId, _label) {
-        return URL.createObjectURL(new Blob([`
-          self.MonacoEnvironment = { baseUrl: '${location.origin}/vendor/monaco/' };
-          importScripts('${location.origin}/vendor/monaco/base/worker/workerMain.js');
-        `], { type: 'application/javascript' }));
+        // Use a blob URL that sets MonacoEnvironment then loads the worker.
+        // Using location.origin ensures the importScripts URL is absolute and
+        // passes COEP/CORP checks when served with Cross-Origin-Resource-Policy: cross-origin.
+        const workerScript = [
+          `self.MonacoEnvironment = { baseUrl: '${location.origin}/vendor/monaco/' };`,
+          `importScripts('${location.origin}/vendor/monaco/base/worker/workerMain.js');`,
+        ].join('\n');
+        return URL.createObjectURL(new Blob([workerScript], { type: 'application/javascript' }));
       }
     };
     require(['vs/editor/editor.main'], () => {

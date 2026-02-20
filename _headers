@@ -1,3 +1,51 @@
 /*
   Cross-Origin-Opener-Policy: same-origin
   Cross-Origin-Embedder-Policy: require-corp
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: SAMEORIGIN
+  Referrer-Policy: strict-origin-when-cross-origin
+
+# HTML — always revalidate
+/*.html
+  Cache-Control: no-cache, must-revalidate
+
+/
+  Cache-Control: no-cache, must-revalidate
+
+# JS app files — revalidate (small, change often)
+/js/*
+  Cache-Control: no-cache, must-revalidate
+
+# Vendor JS/CSS — cache aggressively (versioned by filename)
+/vendor/xterm/*
+  Cache-Control: public, max-age=31536000, immutable
+  Cross-Origin-Resource-Policy: cross-origin
+
+/vendor/fonts/*
+  Cache-Control: public, max-age=31536000, immutable
+  Cross-Origin-Resource-Policy: cross-origin
+
+/vendor/monaco/*
+  Cache-Control: public, max-age=31536000, immutable
+  Cross-Origin-Resource-Policy: cross-origin
+
+/vendor/eruda/*
+  Cache-Control: public, max-age=31536000, immutable
+  Cross-Origin-Resource-Policy: cross-origin
+
+# clang.webc — huge file, cache for a year
+/vendor/wasmer/clang.webc
+  Cache-Control: public, max-age=31536000, immutable
+  Cross-Origin-Resource-Policy: cross-origin
+
+/vendor/wasmer/WasmerSDKBundled.js
+  Cache-Control: public, max-age=31536000, immutable
+  Cross-Origin-Resource-Policy: cross-origin
+
+# CSS
+/css/*
+  Cache-Control: no-cache, must-revalidate
+
+# Manifest & icons
+/manifest.json
+  Cache-Control: no-cache, must-revalidate

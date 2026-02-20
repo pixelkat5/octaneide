@@ -1,9 +1,14 @@
 config.json
-server.py
-download_deps.py
 __pycache__/
 *.pyc
 
 # Too large for git — hosted on GitHub Releases instead
 vendor/wasmer/clang.webc
+
+# Large binary — install via npm/download_deps.py
+wasmer-sdk-0.10.0.tgz
+
+# OS junk
+.DS_Store
+Thumbs.db
 

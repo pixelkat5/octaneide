@@ -9,8 +9,8 @@ const Editor = (() => {
       baseUrl: '/vendor/monaco/',
       getWorkerUrl: function(_moduleId, _label) {
         return URL.createObjectURL(new Blob([`
-          self.MonacoEnvironment = { baseUrl: '/vendor/monaco/' };
-          importScripts('/vendor/monaco/base/worker/workerMain.js');
+          self.MonacoEnvironment = { baseUrl: '${location.origin}/vendor/monaco/' };
+          importScripts('${location.origin}/vendor/monaco/base/worker/workerMain.js');
         `], { type: 'application/javascript' }));
       }
     };

@@ -51,7 +51,7 @@ const Compiler = (() => {
     const source = State.files[entry];
     if (!source) { Terminal.print('✗ Source file not found: ' + entry, 'stderr'); setExit(1); return; }
 
-    const compiler = isCpp ? 'clang1900' : 'cclang1900'; // clang 19.x on godbolt
+    const compiler = isCpp ? 'clang2000' : 'cclang2000'; // clang 20.x on godbolt
     Terminal.print(`$ (godbolt.org) ${isCpp ? 'clang++' : 'clang'} ${entry} ${State.settings.std} ${State.settings.opt}`, 'cmd');
     setStatus('spin', 'compiling (Godbolt)…');
 

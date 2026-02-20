@@ -3,12 +3,63 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>OctaneIDE</title>
+
+  <!-- Primary SEO -->
+  <title>OctaneIDE — Free In-Browser C++, Python & Web IDE</title>
+  <meta name="description" content="OctaneIDE is a fast, free in-browser IDE supporting C++, Python, JavaScript, TypeScript, and HTML. No install needed — compile and run code instantly in your browser."/>
+  <meta name="keywords" content="online IDE, browser IDE, C++ compiler online, Python online, JavaScript IDE, in-browser compiler, WebAssembly, code editor"/>
+  <meta name="author" content="OctaneIDE"/>
+  <link rel="canonical" href="https://octaneide.in.net/"/>
+
+  <!-- Open Graph / Social -->
+  <meta property="og:type" content="website"/>
+  <meta property="og:url" content="https://octaneide.in.net/"/>
+  <meta property="og:title" content="OctaneIDE — Free In-Browser C++, Python & Web IDE"/>
+  <meta property="og:description" content="Compile and run C++, Python, JavaScript, TypeScript and more — entirely in your browser. No install, no account required."/>
+  <meta property="og:image" content="https://octaneide.in.net/og-image.png"/>
+  <meta name="twitter:card" content="summary_large_image"/>
+  <meta name="twitter:title" content="OctaneIDE — Free In-Browser IDE"/>
+  <meta name="twitter:description" content="Compile C++, Python, JS and more in your browser. Fast, free, no install."/>
+
+  <!-- PWA / Theme -->
+  <meta name="theme-color" content="#7c6aff"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-title" content="OctaneIDE"/>
   <link rel="manifest" href="manifest.json"/>
-  <link rel="stylesheet" href="vendor/fonts/fonts.css"/>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+
+  <!-- Favicon inline SVG -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%230c0c0f'/><text y='.9em' font-size='80' x='10'>⚡</text></svg>"/>
+
+  <!-- Monaco editor CSS (vendored locally) -->
+  <link rel="preload" href="vendor/monaco/editor/editor.main.css" as="style" onload="this.onload=null;this.rel='stylesheet'"/>
+  <noscript><link rel="stylesheet" href="vendor/monaco/editor/editor.main.css"/></noscript>
+
+  <!-- Fonts: load async to avoid render-blocking -->
+  <link rel="preload" href="vendor/fonts/fonts.css" as="style" onload="this.onload=null;this.rel='stylesheet'"/>
+  <noscript><link rel="stylesheet" href="vendor/fonts/fonts.css"/></noscript>
+
+  <!-- Font Awesome: load async -->
+  <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'" crossorigin/>
+  <noscript><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/></noscript>
+
   <link rel="stylesheet" href="vendor/xterm/xterm.css"/>
   <link rel="stylesheet" href="css/main.css"/>
+
+  <!-- Structured data for search engines -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebApplication",
+    "name": "OctaneIDE",
+    "url": "https://octaneide.in.net/",
+    "description": "Free in-browser IDE supporting C++, Python, JavaScript, TypeScript, and HTML with WebAssembly-powered compilation.",
+    "applicationCategory": "DeveloperApplication",
+    "operatingSystem": "Any",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+    "featureList": ["C++ compiler", "Python runtime", "JavaScript", "TypeScript", "HTML preview", "Monaco editor", "WebAssembly", "offline support"]
+  }
+  </script>
 </head>
 <body>
 <div id="app">
@@ -92,8 +143,18 @@
           <div class="sr" data-label="font size"><label>Font size</label><input type="range" id="s-fontsize" min="10" max="24" value="13"/><span id="s-fontsize-val">13px</span></div>
           <div class="sr" data-label="theme dark light high contrast"><label>Theme</label><select id="s-theme"><option value="vs-dark">Dark</option><option value="vs">Light</option><option value="hc-black">High contrast</option></select></div>
           <div class="sr" data-label="word wrap line wrap"><label>Word wrap</label><input type="checkbox" id="s-wordwrap"/></div>
+          <div class="sr" data-label="dev errors console debug verbose"><label>Dev errors</label><input type="checkbox" id="s-deverrors"/><span class="sr-hint">log full errors to browser console</span></div>
         </div>
         <div class="sg" data-cat="cpp"><div class="sg-title">C / C++ Compiler</div>
+          <div class="sr" data-label="compiler backend browsercc wasmer server local">
+            <label>Compiler backend</label>
+            <select id="s-cpp-backend">
+              <option value="browsercc" selected>Auto (server → Wasmer → Godbolt)</option>
+              <option value="wasmer">Wasmer / clang.webc (in-browser)</option>
+              <option value="server">Local server only (server.py)</option>
+            </select>
+            <span class="sr-hint">local server always takes priority when running</span>
+          </div>
           <div class="sr" data-label="c++ standard version c11 c99 c++17 c++20 c++23"><label>Standard</label><select id="s-std"><option value="-std=c++23">C++23</option><option value="-std=c++20">C++20</option><option value="-std=c++17" selected>C++17</option><option value="-std=c++14">C++14</option><option value="-std=c++11">C++11</option><option value="-std=c11">C11</option><option value="-std=c99">C99</option></select></div>
           <div class="sr" data-label="optimization o0 o1 o2 o3 speed"><label>Optimization</label><select id="s-opt"><option value="-O0">-O0 none</option><option value="-O1" selected>-O1 basic</option><option value="-O2">-O2 moderate</option><option value="-O3">-O3 aggressive</option><option value="-Os">-Os size</option></select></div>
           <div class="sr" data-label="extra flags wall wextra compiler flags"><label>Extra flags</label><input type="text" id="s-flags" placeholder="-Wall -Wextra"/></div>
@@ -149,17 +210,17 @@
     </div>
   </div>
 </div>
-<script src="vendor/xterm/xterm.js"></script>
-<script src="vendor/xterm/xterm-addon-fit.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/loader.js"></script>
-<script src="js/state.js"></script>
-<script src="js/persist.js"></script>
-<script src="js/filetree.js"></script>
-<script src="js/editor.js"></script>
-<script src="js/terminal.js"></script>
-<script src="js/preview.js"></script>
-<script src="js/compiler.js"></script>
-<script src="js/settings.js"></script>
-<script src="js/main.js"></script>
+<script src="vendor/xterm/xterm.js" defer></script>
+<script src="vendor/xterm/xterm-addon-fit.js" defer></script>
+<script src="vendor/monaco/loader.js" defer></script>
+<script src="js/state.js" defer></script>
+<script src="js/persist.js" defer></script>
+<script src="js/filetree.js" defer></script>
+<script src="js/editor.js" defer></script>
+<script src="js/terminal.js" defer></script>
+<script src="js/preview.js" defer></script>
+<script src="js/compiler.js" defer></script>
+<script src="js/settings.js" defer></script>
+<script src="js/main.js" defer></script>
 </body>
 </html>

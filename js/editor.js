@@ -3,14 +3,11 @@ const Editor = (() => {
   const tabsEl = document.getElementById('editor-tabs');
 
   function init() {
-    const MONACO_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs';
-    require.config({ paths: { vs: MONACO_CDN } });
+    const MONACO_BASE = '/vendor/monaco';
+    require.config({ paths: { vs: MONACO_BASE } });
     window.MonacoEnvironment = {
       getWorkerUrl: function(_moduleId, _label) {
-        return URL.createObjectURL(new Blob([`
-          self.MonacoEnvironment = { baseUrl: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/' };
-          importScripts('https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/base/worker/workerMain.js');
-        `], { type: 'application/javascript' }));
+        return '/vendor/monaco/base/worker/workerMain.js';
       }
     };
     require(['vs/editor/editor.main'], () => {

@@ -72,7 +72,7 @@ const Compiler = (() => {
         return _origFetch.call(this, input, init);
       };
       const mod = await import(WASMER_URL);
-      await mod.init();
+      await mod.init({ registryUrl: '/wasmer-graphql' });
       window._WasmerSDK = mod;
       _wasmerReady = true;
       Terminal.print('✓ Wasmer SDK ready.', 'success');

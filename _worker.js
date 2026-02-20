@@ -1,11 +1,7 @@
 /**
  * Cloudflare Pages Worker — Wasmer Registry CORS Proxy
- * 
- * Place this file at the root of your repo as _worker.js
- * Cloudflare Pages will automatically deploy it as a Worker.
- * 
  * Proxies /wasmer-graphql → registry.wasmer.io/graphql
- * stripping the user-agent header that causes CORS failures.
+ * stripping the user-agent header that causes CORS preflight failures.
  */
 
 const TARGET = "https://registry.wasmer.io/graphql";
@@ -14,7 +10,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // Pass through everything except our proxy endpoint
+    // Pass everything else to static assets
     if (url.pathname !== "/wasmer-graphql") {
       return env.ASSETS.fetch(request);
     }
@@ -24,17 +20,23 @@ export default {
       return new Response(null, { status: 204, headers: corsHeaders(request) });
     }
 
-    // Strip user-agent, forward to real registry
-    const headers = new Headers(request.headers);
-    headers.delete("user-agent");
-    headers.delete("User-Agent");
-    headers.set("host", "registry.wasmer.io");
+    // Read body as text so we can forward it cleanly
+    const body = request.method !== "GET" && request.method !== "HEAD"
+      ? await request.text()
+      : undefined;
 
-    const response = await fetch(new Request(TARGET, {
+    // Build clean headers — strip user-agent, set correct host and content-type
+    const headers = new Headers();
+    headers.set("host", "registry.wasmer.io");
+    headers.set("content-type", request.headers.get("content-type") || "application/json");
+    const auth = request.headers.get("authorization");
+    if (auth) headers.set("authorization", auth);
+
+    const response = await fetch(TARGET, {
       method:  request.method,
       headers: headers,
-      body:    request.method !== "GET" ? request.body : undefined,
-    }));
+      body:    body,
+    });
 
     const responseHeaders = new Headers(response.headers);
     Object.entries(corsHeaders(request)).forEach(([k, v]) => responseHeaders.set(k, v));

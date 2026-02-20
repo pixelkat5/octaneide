@@ -46,16 +46,20 @@ const Compiler = (() => {
   }
 
   // ── Load Wasmer SDK (lazy, once) ──
+  // Loaded from unpkg (the SDK's intended delivery method).
+  // The service worker caches it after first load so subsequent uses are offline-capable.
+  const WASMER_URL = 'https://unpkg.com/@wasmer/sdk@0.9.0/dist/index.mjs';
+
   async function ensureWasmer() {
     if (_wasmerReady)  return true;
     if (_wasmerFailed) return false;
 
-    Terminal.print('⟳ Loading Wasmer SDK (first run only)…', 'info');
+    Terminal.print('⟳ Loading Wasmer SDK…', 'info');
     setStatus('spin', 'loading Wasmer…');
 
     try {
-      const mod = await import('../vendor/wasmer/WasmerSDKBundled.js');
-      await mod.init({ token: 'wap_803dcea5adfa7402fbd765eb488d6bd54a0c6253ffdc8fd0945df6c2be4e7c5a', workerUrl: '../vendor/wasmer/WasmerSDKBundled.js' });
+      const mod = await import(WASMER_URL);
+      await mod.init({ token: 'wap_803dcea5adfa7402fbd765eb488d6bd54a0c6253ffdc8fd0945df6c2be4e7c5a' });
       window._WasmerSDK = mod;
       _wasmerReady = true;
       Terminal.print('✓ Wasmer SDK ready.', 'success');
@@ -63,6 +67,7 @@ const Compiler = (() => {
     } catch (e) {
       _wasmerFailed = true;
       Terminal.print('✗ Failed to load Wasmer SDK: ' + e.message, 'stderr');
+      Terminal.print('  Make sure you are online for the first C++ compile.', 'info');
       return false;
     }
   }

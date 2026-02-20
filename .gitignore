@@ -3,3 +3,7 @@ server.py
 download_deps.py
 __pycache__/
 *.pyc
+
+# Too large for git — hosted on GitHub Releases instead
+vendor/wasmer/clang.webc
+

@@ -46,9 +46,8 @@ const Compiler = (() => {
   }
 
   // ── Load Wasmer SDK (lazy, once) ──
-  // Loaded from unpkg (the SDK's intended delivery method).
-  // The service worker caches it after first load so subsequent uses are offline-capable.
-  const WASMER_URL = 'https://unpkg.com/@wasmer/sdk@0.7.0/dist/index.mjs';
+  // Uses the locally-vendored copy — no CDN or registry needed.
+  const WASMER_URL = '/vendor/wasmer/WasmerSDKBundled.js';
 
   async function ensureWasmer() {
     if (_wasmerReady)  return true;
@@ -58,20 +57,8 @@ const Compiler = (() => {
     setStatus('spin', 'loading Wasmer…');
 
     try {
-      // Intercept fetch calls to registry.wasmer.io and reroute them through
-      // our same-origin proxy at /wasmer-graphql, which strips the user-agent
-      // header that causes CORS preflight failures.
-      const _origFetch = window.fetch;
-      window.fetch = function(input, init) {
-        const url = (typeof input === 'string') ? input : input.url;
-        if (url && url.includes('registry.wasmer.io')) {
-          // Rewrite URL to our same-origin proxy — worker forwards body as-is
-          input = '/wasmer-graphql';
-        }
-        return _origFetch.call(this, input, init);
-      };
       const mod = await import(WASMER_URL);
-      await mod.init({ registryUrl: '/wasmer-graphql' });
+      await mod.init();
       window._WasmerSDK = mod;
       _wasmerReady = true;
       Terminal.print('✓ Wasmer SDK ready.', 'success');
@@ -79,40 +66,54 @@ const Compiler = (() => {
     } catch (e) {
       _wasmerFailed = true;
       Terminal.print('✗ Failed to load Wasmer SDK: ' + e.message, 'stderr');
-      Terminal.print('  Make sure you are online for the first C++ compile.', 'info');
       return false;
     }
   }
 
-  // ── Load clang package (lazy, cached by browser) ──
+  // ── Load clang package from local vendor file ──
+  // Requires vendor/wasmer/clang.webc — run download_deps.py to fetch it.
   async function ensureClang() {
     if (_clang) return _clang;
-    Terminal.print('⟳ Fetching clang from Wasmer registry…', 'info');
-    Terminal.print('  (first run downloads ~100 MB — cached afterwards)', 'info');
-    Terminal.print('  This can take 1–3 minutes on first use, please wait…', 'info');
-    setStatus('spin', 'downloading clang…');
-
-    // Animate a progress indicator in the terminal while we wait
-    const frames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
-    let fi = 0, elapsed = 0;
-    const timer = setInterval(() => {
-      elapsed++;
-      const mins = String(Math.floor(elapsed / 60)).padStart(1,'0');
-      const secs = String(elapsed % 60).padStart(2,'0');
-      Terminal.write(`\r\x1b[38;5;69m  ${frames[fi++ % frames.length]} downloading clang… ${mins}:${secs}\x1b[0m`);
-    }, 1000);
+    Terminal.print('⟳ Loading clang from vendor…', 'info');
+    setStatus('spin', 'loading clang…');
 
     try {
       const { Wasmer } = window._WasmerSDK;
-      _clang = await Wasmer.fromRegistry('clang/clang');
-      clearInterval(timer);
-      Terminal.write('\r\x1b[2K');
+
+      // clang.webc is too large for the git repo / Cloudflare Pages.
+      // It is hosted as a GitHub Release asset and cached in the browser after first load.
+      const CLANG_WEBC_URL = 'https://github.com/pixelkat5/octaneide/releases/download/clang-webc/clang.webc';
+      const resp = await fetch(CLANG_WEBC_URL);
+      if (!resp.ok) {
+        throw new Error(
+          'clang.webc not found (HTTP ' + resp.status + '). ' +
+          'Run  python download_deps.py  to download it (~100 MB, one-time).'
+        );
+      }
+
+      Terminal.print('  clang.webc found — loading (~100 MB, please wait)…', 'info');
+
+      // Animate a progress indicator while the file is parsed
+      const frames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
+      let fi = 0, elapsed = 0;
+      const timer = setInterval(() => {
+        elapsed++;
+        const mins = String(Math.floor(elapsed / 60)).padStart(1,'0');
+        const secs = String(elapsed % 60).padStart(2,'0');
+        Terminal.write(`\r\x1b[38;5;69m  ${frames[fi++ % frames.length]} loading clang… ${mins}:${secs}\x1b[0m`);
+      }, 1000);
+
+      try {
+        const blob = await resp.blob();
+        const file = new File([blob], 'clang.webc');
+        _clang = await Wasmer.fromFile(file);
+      } finally {
+        clearInterval(timer);
+        Terminal.write('\r\x1b[2K');
+      }
     } catch(e) {
-      clearInterval(timer);
-      Terminal.write('\r\x1b[2K');
-      Terminal.print('✗ Failed to fetch clang from Wasmer registry: ' + e.message, 'stderr');
-      Terminal.print('  Make sure you are online for the first compile (clang is ~100MB and cached after).', 'info');
-      throw e; // re-throw so runCppWasmer's catch picks it up
+      Terminal.print('✗ Failed to load clang: ' + e.message, 'stderr');
+      throw e;
     }
 
     Terminal.print('✓ clang ready.', 'success');

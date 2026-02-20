@@ -45,27 +45,41 @@ const Compiler = (() => {
     }
   }
 
-  // ── Godbolt (Compiler Explorer) remote compile API ──
-  // Free, no API key required. Compiles and runs via godbolt.org.
-  async function runCppGodbolt(entry, isCpp) {
-    const source = State.files[entry];
-    if (!source) { Terminal.print('✗ Source file not found: ' + entry, 'stderr'); setExit(1); return; }
+  // ─────────────────────────────────────────────────────────────
+  // Godbolt (Compiler Explorer) — remote compile & execute API
+  // ─────────────────────────────────────────────────────────────
+  // Compiler IDs in priority order. We probe them once and cache the winner.
+  const GODBOLT_CPP_COMPILERS = ['clang1900', 'clang1800', 'clang1700', 'clang1601', 'g132', 'g122', 'g112'];
+  const GODBOLT_C_COMPILERS   = ['clang1900', 'clang1800', 'clang1700', 'clang1601', 'g132', 'g122'];
 
-    const compiler = isCpp ? 'clang1900' : 'cclang1900'; // clang 19.x on godbolt (stable executor)
-    Terminal.print(`$ (godbolt.org) ${isCpp ? 'clang++' : 'clang'} ${entry} ${State.settings.std} ${State.settings.opt}`, 'cmd');
-    setStatus('spin', 'compiling (Godbolt)…');
+  // Cache the working compiler id so we don't probe on every run
+  let _godboltCppCompiler = null;
+  let _godboltCCompiler   = null;
 
-    // Build user flags (strip -std and -O as we pass them separately)
-    const extraFlags = (State.settings.flags || '')
-      .split(/\s+/).filter(f => f && !f.startsWith('-std') && !f.startsWith('-O'));
+  async function _probeGodboltCompiler(candidates) {
+    // Probe with a trivial program to find first working compiler
+    const probe = { source: 'int main(){}', options: { userArguments: '', executeParameters: { stdin: '', args: '' }, compilerOptions: { executorRequest: true }, filters: { execute: true }, tools: [] }, lang: 'c++', allowStoreCodeDebug: false };
+    for (const id of candidates) {
+      try {
+        const r = await fetch(`https://godbolt.org/api/compiler/${id}/compile`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({ ...probe, compiler: id }),
+          signal: AbortSignal.timeout(8000),
+        });
+        if (r.status !== 404 && r.ok) return id;
+      } catch(_) {}
+    }
+    return null;
+  }
 
-    // Godbolt /api/compiler/<id>/compile — compile + execute
+  async function tryGodboltCompile(source, compilerId, isCpp, extraFlags, userStdin) {
     const body = {
       source,
-      compiler,
+      compiler: compilerId,
       options: {
-        userArguments: [State.settings.std, State.settings.opt, ...extraFlags].join(' '),
-        executeParameters: { stdin: '', args: '' },
+        userArguments: [State.settings.std, State.settings.opt, ...extraFlags].join(' ').trim(),
+        executeParameters: { stdin: userStdin || '', args: '' },
         compilerOptions: { executorRequest: true },
         filters: { execute: true },
         tools: [],
@@ -73,63 +87,153 @@ const Compiler = (() => {
       lang: isCpp ? 'c++' : 'c',
       allowStoreCodeDebug: false,
     };
+    const resp = await fetch(
+      `https://godbolt.org/api/compiler/${compilerId}/compile`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30000),
+      }
+    );
+    return resp;
+  }
+
+  async function runCppGodbolt(entry, isCpp) {
+    const source = State.files[entry];
+    if (!source) { Terminal.print('✗ Source file not found: ' + entry, 'stderr'); setExit(1); return; }
+
+    // Check multi-file: Godbolt only handles single files, warn if more
+    const cppFiles = Object.keys(State.files).filter(f => f.endsWith('.cpp') || f.endsWith('.c') || f.endsWith('.h') || f.endsWith('.hpp'));
+    if (cppFiles.length > 1) {
+      Terminal.print('⚠ Godbolt only compiles single files. Using: ' + entry, 'warn');
+      Terminal.print('  For multi-file projects, use the local server backend (server.py).', 'info');
+    }
+
+    // ── stdin: collect before compiling (Godbolt needs it upfront) ──
+    let stdin = '';
+    const needsInput = /\b(cin\s*>>|scanf\s*\(|getline\s*\(|gets\s*\(|fgets\s*\(|read\s*\(|getchar\s*\()/i.test(source);
+    if (needsInput) {
+      Terminal.print('⚠ This program reads stdin. Enter input below, then Ctrl+D when done.', 'warn');
+      stdin = await Terminal.promptStdin();
+    }
+
+    setStatus('spin', 'compiling (Godbolt)…');
+    Terminal.print(`$ (godbolt.org) ${isCpp ? 'clang++' : 'clang'} ${entry} ${State.settings.std} ${State.settings.opt}`, 'cmd');
+
+    // Extra flags: strip -std and -O since we pass them separately
+    const extraFlags = (State.settings.flags || '')
+      .split(/\s+/).filter(f => f && !f.startsWith('-std') && !f.startsWith('-O'));
+
+    // Find/cache working compiler
+    const candidates = isCpp ? GODBOLT_CPP_COMPILERS : GODBOLT_C_COMPILERS;
+    if (isCpp && !_godboltCppCompiler) {
+      Terminal.print('  detecting available compiler…', 'info');
+      _godboltCppCompiler = await _probeGodboltCompiler(candidates);
+    }
+    if (!isCpp && !_godboltCCompiler) {
+      Terminal.print('  detecting available compiler…', 'info');
+      _godboltCCompiler = await _probeGodboltCompiler(candidates);
+    }
+    const compilerId = isCpp ? _godboltCppCompiler : _godboltCCompiler;
+
+    if (!compilerId) {
+      Terminal.print('✗ Could not find a working Godbolt compiler. Check your internet connection.', 'stderr');
+      Terminal.print('  Try switching to the local server backend in Settings → C/C++ → Compiler backend.', 'info');
+      setExit(1); setStatus('err', 'error'); return;
+    }
 
     try {
-      const resp = await fetch(
-        `https://godbolt.org/api/compiler/${compiler}/compile`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-          body: JSON.stringify(body),
+      setStatus('spin', `compiling (${compilerId})…`);
+      const resp = await tryGodboltCompile(source, compilerId, isCpp, extraFlags, stdin);
+
+      if (!resp.ok) {
+        // Invalidate cached compiler on 404 (retired)
+        if (resp.status === 404) {
+          if (isCpp) _godboltCppCompiler = null;
+          else       _godboltCCompiler   = null;
         }
-      );
-      if (!resp.ok) throw new Error('Godbolt API HTTP ' + resp.status);
+        throw new Error('Godbolt API HTTP ' + resp.status);
+      }
+
       const data = await resp.json();
 
-      // Print compiler stderr (warnings/errors)
-      const asmLines = data.asm || [];
-      const stderr   = (data.stderr || []).map(l => l.text).join('\n').trim();
-      const stdout   = (data.execResult?.stdout || []).map(l => l.text).join('\n');
-      const execStderr = (data.execResult?.stderr || []).map(l => l.text).join('\n').trim();
-      const buildErr  = (data.buildResult?.stderr || []).map(l => l.text).join('\n').trim();
+      // ── Extract output ──
+      // Godbolt returns build errors separately in buildResult vs asm stderr
+      const buildStderr   = (data.buildResult?.stderr || []).map(l => l.text || '').join('\n').trim();
+      const compileStderr = (data.stderr || []).map(l => l.text || '').join('\n').trim();
+      const compileErrors = buildStderr || compileStderr;
 
-      const compileErrors = buildErr || stderr;
       if (compileErrors) {
-        Terminal.write('\x1b[38;5;203m' + compileErrors.replace(/\n/g, '\r\n') + '\x1b[0m\r\n');
+        // Pretty-print: highlight error/warning lines
+        compileErrors.split('\n').forEach(line => {
+          const isError = /\berror\b/i.test(line);
+          const isWarn  = /\bwarning\b/i.test(line);
+          if (isError)     Terminal.write('\x1b[38;5;203m' + line + '\x1b[0m\r\n');
+          else if (isWarn) Terminal.write('\x1b[38;5;220m' + line + '\x1b[0m\r\n');
+          else             Terminal.write('\x1b[38;5;244m' + line + '\x1b[0m\r\n');
+        });
       }
 
-      const exitCode = data.execResult?.exitCode ?? (data.code || 0);
+      // Check if compilation succeeded
+      const buildCode  = data.buildResult?.exitCode ?? data.code ?? 0;
       const didExecute = data.execResult !== undefined;
 
-      if (!didExecute || data.code !== 0) {
-        if (!compileErrors) Terminal.print('✗ Compilation failed.', 'stderr');
-        setExit(data.code || 1); setStatus('ok', 'ready'); return;
+      if (buildCode !== 0 || !didExecute) {
+        if (!compileErrors) Terminal.print('✗ Compilation failed (exit ' + buildCode + ').', 'stderr');
+        setExit(buildCode || 1); setStatus('ok', 'ready'); return;
       }
 
-      Terminal.print('✓ Compiled — output:', 'success');
-      if (stdout) Terminal.write(stdout.replace(/\n/g, '\r\n') + (stdout.endsWith('\n') ? '' : '\r\n'));
-      if (execStderr) Terminal.write('\x1b[38;5;203m' + execStderr.replace(/\n/g, '\r\n') + '\x1b[0m\r\n');
+      const execResult  = data.execResult;
+      const execExitCode = execResult?.exitCode ?? 0;
+      const stdout       = (execResult?.stdout || []).map(l => l.text || '').join('\n');
+      const execStderr   = (execResult?.stderr || []).map(l => l.text || '').join('\n').trim();
 
-      Terminal.print(`(exit ${exitCode}) — ⚠ Ran on godbolt.org servers (no local stdin support)`, 'info');
-      setExit(exitCode); setStatus('ok', 'ready');
+      if (compileErrors && buildCode === 0) {
+        // Only warnings — still compiled
+        Terminal.print('⚠ Compiled with warnings:', 'warn');
+      } else {
+        Terminal.print('✓ Compiled — output:', 'success');
+      }
+
+      if (stdout) {
+        Terminal.write('\x1b[0m' + stdout.replace(/\n/g, '\r\n'));
+        if (!stdout.endsWith('\n')) Terminal.write('\r\n');
+      }
+      if (execStderr) {
+        Terminal.write('\x1b[38;5;203m' + execStderr.replace(/\n/g, '\r\n') + '\x1b[0m\r\n');
+      }
+      if (!stdout && !execStderr) {
+        Terminal.print('(no output)', 'info');
+      }
+
+      const stdinNote = needsInput ? '' : '';
+      Terminal.print(
+        `─── exit ${execExitCode} · ran on godbolt.org${needsInput ? ' · stdin was pre-collected' : ''} ───`,
+        execExitCode === 0 ? 'info' : 'warn'
+      );
+      setExit(execExitCode); setStatus('ok', 'ready');
+
     } catch (e) {
       Terminal.print('✗ Godbolt error: ' + e.message, 'stderr');
-      Terminal.print('  Check your internet connection or switch to local server backend.', 'info');
+      if (e.name === 'TimeoutError') {
+        Terminal.print('  Request timed out. Godbolt may be slow or down.', 'info');
+      }
+      Terminal.print('  Tip: run  python server.py  locally for offline compilation.', 'info');
       setExit(1); setStatus('err', 'error');
     }
   }
 
-  // ── Load Wasmer SDK (lazy, once) ──
-  // Uses the locally-vendored copy — no CDN or registry needed.
+  // ─────────────────────────────────────────────────────────────
+  // Wasmer in-browser compile (clang.webc)
+  // ─────────────────────────────────────────────────────────────
   const WASMER_URL = '/vendor/wasmer/WasmerSDKBundled.js';
 
   async function ensureWasmer() {
     if (_wasmerReady)  return true;
     if (_wasmerFailed) return false;
-
     Terminal.print('⟳ Loading Wasmer SDK…', 'info');
     setStatus('spin', 'loading Wasmer…');
-
     try {
       const mod = await import(WASMER_URL);
       await mod.init();
@@ -144,18 +248,12 @@ const Compiler = (() => {
     }
   }
 
-  // ── Load clang package from local vendor file ──
-  // Requires vendor/wasmer/clang.webc — run download_deps.py to fetch it.
   async function ensureClang() {
     if (_clang) return _clang;
     Terminal.print('⟳ Loading clang from vendor…', 'info');
     setStatus('spin', 'loading clang…');
-
     try {
       const { Wasmer } = window._WasmerSDK;
-
-      // clang.webc is proxied through /clang-webc (Cloudflare worker adds CORS headers).
-      // The worker fetches it from GitHub Releases. Browser caches it after first load.
       const resp = await fetch('/clang-webc');
       if (!resp.ok) {
         throw new Error(
@@ -163,10 +261,7 @@ const Compiler = (() => {
           'Run  python download_deps.py  to download it (~100 MB, one-time).'
         );
       }
-
       Terminal.print('  clang.webc found — loading (~100 MB, please wait)…', 'info');
-
-      // Animate a progress indicator while the file is parsed
       const frames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
       let fi = 0, elapsed = 0;
       const timer = setInterval(() => {
@@ -175,7 +270,6 @@ const Compiler = (() => {
         const secs = String(elapsed % 60).padStart(2,'0');
         Terminal.write(`\r\x1b[38;5;69m  ${frames[fi++ % frames.length]} loading clang… ${mins}:${secs}\x1b[0m`);
       }, 1000);
-
       try {
         const blob = await resp.blob();
         const file = new File([blob], 'clang.webc');
@@ -188,12 +282,13 @@ const Compiler = (() => {
       Terminal.print('✗ Failed to load clang: ' + e.message, 'stderr');
       throw e;
     }
-
     Terminal.print('✓ clang ready.', 'success');
     return _clang;
   }
 
-  // ── C / C++ ──
+  // ─────────────────────────────────────────────────────────────
+  // C / C++ entry point — tries: server → Godbolt → Wasmer
+  // ─────────────────────────────────────────────────────────────
   async function runCpp() {
     const entry =
       Object.keys(State.files).find(f => FileTree.basename(f) === 'main.cpp') ||
@@ -203,41 +298,41 @@ const Compiler = (() => {
     if (!entry) { Terminal.print('✗ No .cpp or .c file found.', 'stderr'); setExit(1); return; }
 
     const isCpp = entry.endsWith('.cpp') || entry.endsWith('.cc');
+    const backend = State.settings.cppBackend || 'browsercc';
     setStatus('spin', 'compiling…');
 
     try {
-      const backend = State.settings.cppBackend || 'browsercc';
-
       if (backend === 'server') {
-        // Server-only: fail clearly if not running
-        const serverOk = await runCppServer(entry, isCpp);
-        if (!serverOk) {
-          Terminal.print('✗ Local server not running. Start server.py or switch compiler backend in Settings.', 'stderr');
+        const ok = await runCppServer(entry, isCpp);
+        if (!ok) {
+          Terminal.print('✗ Local server not running.', 'stderr');
+          Terminal.print('  Start it with:  python server.py', 'info');
+          Terminal.print('  Or switch to another backend in ⚙ Settings → C/C++.', 'info');
           setExit(1); setStatus('err', 'error');
         }
         return;
       }
 
       if (backend === 'wasmer') {
-        // Try local server first, then Wasmer
         const serverOk = await runCppServer(entry, isCpp);
         if (serverOk) return;
-        Terminal.print('⟳ No local server — trying Wasmer in-browser compile…', 'info');
+        Terminal.print('⟳ No local server — using Wasmer in-browser compile…', 'info');
         Terminal.print(`$ ${isCpp ? 'clang++' : 'clang'} ${entry} ${State.settings.std} ${State.settings.opt}`, 'cmd');
-        const wasmerOk = await ensureWasmer();
-        if (!wasmerOk) {
-          Terminal.print('✗ Could not load Wasmer SDK. Check the browser console for details.', 'stderr');
+        if (!await ensureWasmer()) {
+          Terminal.print('✗ Could not load Wasmer SDK.', 'stderr');
           setExit(1); setStatus('err', 'error'); return;
         }
         await runCppWasmer(entry, isCpp);
         return;
       }
 
-      // Default: auto (server → Godbolt)
+      // Default (browsercc): server → Godbolt → Wasmer fallback
       const serverOk = await runCppServer(entry, isCpp);
       if (serverOk) return;
+
       Terminal.print('⟳ No local server — compiling via Godbolt…', 'info');
       await runCppGodbolt(entry, isCpp);
+
     } catch(e) {
       Terminal.print('✗ C++ runner error: ' + e.message, 'stderr');
       if (State.settings.showDevErrors) console.error(e);
@@ -245,11 +340,13 @@ const Compiler = (() => {
     }
   }
 
-  // ── Wasmer in-browser compile ──
+  // ─────────────────────────────────────────────────────────────
+  // Wasmer in-browser compile path
+  // ─────────────────────────────────────────────────────────────
   async function runCppWasmer(entry, isCpp) {
     try {
       const clang = await ensureClang();
-      const { Directory, Wasmer } = window._WasmerSDK;
+      const { Directory } = window._WasmerSDK;
 
       const project = new Directory();
       const filesToSend = { ...State.files };
@@ -278,10 +375,7 @@ const Compiler = (() => {
       setStatus('spin', 'compiling (Wasmer)…');
       Terminal.print('  compiling…', 'info');
 
-      // Stream stderr live while clang runs, with a 5-minute timeout
       const compileInstance = await clang.entrypoint.run({ args, mount: { '/project': project } });
-
-      // Pipe stderr live to terminal
       const dec = new TextDecoder();
       const stderrPipe = compileInstance.stderr.pipeTo(new WritableStream({
         write(chunk) {
@@ -290,8 +384,7 @@ const Compiler = (() => {
         }
       })).catch(() => {});
 
-      // Wait with timeout
-      const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+      const TIMEOUT_MS = 5 * 60 * 1000;
       let compileOutput;
       try {
         compileOutput = await Promise.race([
@@ -304,7 +397,6 @@ const Compiler = (() => {
         return true;
       }
 
-      // Also print any stdout from clang (warnings etc.)
       if (compileOutput.stdout && compileOutput.stdout.trim()) {
         Terminal.write('\x1b[38;5;203m' + compileOutput.stdout.trim().replace(/\n/g, '\r\n') + '\x1b[0m\r\n');
       }
@@ -318,14 +410,11 @@ const Compiler = (() => {
       Terminal.print('✓ Compiled — running…', 'success');
       setStatus('spin', 'running…');
 
-      // Read the compiled WASM and run it via our own WASI shim
-      // (clang/clang on Wasmer compiles to WASI-compatible output)
       let wasmBytes;
       try {
         wasmBytes = await project.readFile('a.out');
       } catch(e) {
         Terminal.print('✗ Could not read compiled output: ' + e.message, 'stderr');
-        Terminal.print('  (compilation may have succeeded but output file not found)', 'warn');
         setExit(1); setStatus('ok', 'ready');
         return true;
       }
@@ -345,13 +434,14 @@ const Compiler = (() => {
     } catch (e) {
       Terminal.print('✗ Wasmer error: ' + e.message, 'stderr');
       console.error('Wasmer compile error:', e);
-      return false; // not handled — try fallback
+      return false;
     }
   }
 
-  // ── Local server (primary offline path) ──
-  // Returns true if server handled the request (success or compile error),
-  // false if the server isn't running at all.
+  // ─────────────────────────────────────────────────────────────
+  // Local server (server.py) path
+  // Returns true if server handled the request, false if server isn't running.
+  // ─────────────────────────────────────────────────────────────
   async function runCppServer(entry, isCpp) {
     const filesToSend = { ...State.files };
     for (const id of State.settings.downloadedLibs) {
@@ -365,19 +455,27 @@ const Compiler = (() => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ files: filesToSend, entry, std: State.settings.std, opt: State.settings.opt, flags: State.settings.flags }),
+        signal: AbortSignal.timeout(15000),
       });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       result = await r.json();
     } catch (e) {
-      // Server not running — signal caller to try Wasmer
-      return false;
+      return false; // server not running
     }
-    Terminal.print('$ (server.py) ' + (isCpp ? 'clang++' : 'clang') + ' ' + entry, 'cmd');
 
-    if (result.stderr) Terminal.write('\x1b[38;5;203m' + result.stderr.replace(/\n/g, '\r\n') + '\x1b[0m\r\n');
+    Terminal.print('$ (server.py) ' + (isCpp ? 'clang++' : 'clang') + ' ' + entry, 'cmd');
+    if (result.stderr) {
+      result.stderr.split('\n').forEach(line => {
+        const isError = /\berror\b/i.test(line);
+        const isWarn  = /\bwarning\b/i.test(line);
+        if (isError)     Terminal.write('\x1b[38;5;203m' + line + '\x1b[0m\r\n');
+        else if (isWarn) Terminal.write('\x1b[38;5;220m' + line + '\x1b[0m\r\n');
+        else if (line)   Terminal.write('\x1b[38;5;244m' + line + '\x1b[0m\r\n');
+      });
+    }
     if (!result.success) {
       Terminal.print('✗ Compilation failed (exit ' + result.exit_code + ')', 'stderr');
-      setExit(result.exit_code || 1); setStatus('ok', 'ready'); return;
+      setExit(result.exit_code || 1); setStatus('ok', 'ready'); return true;
     }
 
     Terminal.print('✓ Compiled — running…', 'success');
@@ -397,7 +495,9 @@ const Compiler = (() => {
     return true;
   }
 
-  // ── Interactive WASM via Web Worker + SharedArrayBuffer ──
+  // ─────────────────────────────────────────────────────────────
+  // Interactive WASM via Web Worker + SharedArrayBuffer
+  // ─────────────────────────────────────────────────────────────
   function runWasmInteractive(wasmBytes) {
     return new Promise(resolve => {
       const sharedBuf = new SharedArrayBuffer(1024 * 1024);
@@ -430,48 +530,199 @@ const Compiler = (() => {
     });
   }
 
-  // ── Inline WASM (non-interactive fallback) ──
+  // ─────────────────────────────────────────────────────────────
+  // Inline WASM runner — complete WASI shim
+  // Handles: stdio, stdin, env, args, clock, random, exit, proc_raise,
+  //          path ops (stubbed), fd_seek, fd_tell, fd_advise, poll_oneoff
+  // ─────────────────────────────────────────────────────────────
   async function runWasmInline(bytes, stdin = '') {
     let exitCode = 0, memory;
     const dec = new TextDecoder(), enc = new TextEncoder();
     const stdinB = enc.encode(stdin + (stdin.endsWith('\n') ? '' : '\n'));
     let stdinPos = 0;
 
+    // Helper: read u32/u64 from wasm memory
+    const u32 = (ptr)      => new DataView(memory.buffer).getUint32(ptr, true);
+    const setU32 = (ptr, v)=> new DataView(memory.buffer).setUint32(ptr, v, true);
+    const setU64 = (ptr, v)=> new DataView(memory.buffer).setBigUint64(ptr, v, true);
+
+    // Gather iov scatter/gather buffers → string
+    function iov_read(iovs, iovs_len) {
+      let out = '', total = 0;
+      for (let i = 0; i < iovs_len; i++) {
+        const base = u32(iovs + i * 8), len = u32(iovs + i * 8 + 4);
+        out += dec.decode(new Uint8Array(memory.buffer, base, len));
+        total += len;
+      }
+      return { out, total };
+    }
+
     const wasi = { wasi_snapshot_preview1: {
-      fd_write(fd, iovs, iovs_len, nw) {
-        const v = new DataView(memory.buffer); let s = '', tot = 0;
-        for (let i = 0; i < iovs_len; i++) { const b = v.getUint32(iovs+i*8,true), l = v.getUint32(iovs+i*8+4,true); s += dec.decode(new Uint8Array(memory.buffer,b,l)); tot += l; }
-        v.setUint32(nw, tot, true);
-        Terminal.write((fd===2?'\x1b[38;5;203m':'\x1b[0m') + s.replace(/\n/g,'\r\n') + '\x1b[0m');
+      // ── fd_write ──
+      fd_write(fd, iovs, iovs_len, nwritten) {
+        const { out, total } = iov_read(iovs, iovs_len);
+        setU32(nwritten, total);
+        if (fd === 1) Terminal.write('\x1b[0m' + out.replace(/\n/g, '\r\n') + '\x1b[0m');
+        else if (fd === 2) Terminal.write('\x1b[38;5;203m' + out.replace(/\n/g, '\r\n') + '\x1b[0m');
+        return 0; // ESUCCESS
+      },
+
+      // ── fd_read ──
+      fd_read(fd, iovs, iovs_len, nread) {
+        let total = 0;
+        if (fd === 0) {
+          const mem8 = new Uint8Array(memory.buffer);
+          for (let i = 0; i < iovs_len; i++) {
+            const base = u32(iovs + i * 8), len = u32(iovs + i * 8 + 4);
+            const chunk = stdinB.slice(stdinPos, stdinPos + len);
+            mem8.set(chunk, base);
+            stdinPos += chunk.length;
+            total += chunk.length;
+            if (chunk.length < len) break; // EOF
+          }
+        }
+        setU32(nread, total);
         return 0;
       },
-      fd_read(fd, iovs, iovs_len, nr) {
-        const v = new DataView(memory.buffer); let tot = 0;
-        for (let i = 0; i < iovs_len; i++) { const b = v.getUint32(iovs+i*8,true), l = v.getUint32(iovs+i*8+4,true); const chunk = stdinB.slice(stdinPos, stdinPos+l); new Uint8Array(memory.buffer).set(chunk,b); stdinPos += chunk.length; tot += chunk.length; }
-        new DataView(memory.buffer).setUint32(nr, tot, true); return 0;
+
+      // ── fd_close ──
+      fd_close: () => 0,
+
+      // ── fd_seek (whence: 0=SET 1=CUR 2=END) ──
+      fd_seek(fd, offset_lo, offset_hi, whence, newoffset) {
+        // Stdin/stdout/stderr: not seekable → return ESPIPE (70)
+        if (fd < 3) { setU64(newoffset, 0n); return 70; }
+        setU64(newoffset, 0n); return 0;
       },
-      fd_close:()=>0, fd_seek:()=>70,
-      fd_fdstat_get:(fd,p)=>{new DataView(memory.buffer).setUint8(p,fd<3?2:4);return 0;},
-      fd_prestat_get:()=>8, fd_prestat_dir_name:()=>28, path_open:()=>8,
-      environ_get:()=>0, environ_sizes_get:(c,b)=>{const v=new DataView(memory.buffer);v.setUint32(c,0,true);v.setUint32(b,0,true);return 0;},
-      args_get:()=>0, args_sizes_get:(c,b)=>{const v=new DataView(memory.buffer);v.setUint32(c,0,true);v.setUint32(b,0,true);return 0;},
-      proc_exit:(c)=>{exitCode=c;throw{__exit:true,c};},
-      clock_time_get:(id,p,ptr)=>{new DataView(memory.buffer).setBigUint64(ptr,BigInt(Date.now())*1000000n,true);return 0;},
-      clock_res_get:(id,ptr)=>{new DataView(memory.buffer).setBigUint64(ptr,1000000n,true);return 0;},
-      sched_yield:()=>0,
-      random_get:(p,l)=>{crypto.getRandomValues(new Uint8Array(memory.buffer,p,l));return 0;},
+
+      // ── fd_tell ──
+      fd_tell(fd, offset) {
+        setU64(offset, 0n); return 0;
+      },
+
+      // ── fd_fdstat_get ──
+      fd_fdstat_get(fd, stat) {
+        // filetype: 0=unknown,1=block_device,2=char_device,3=dir,4=regular,5=socket_dgram,6=socket_stream,7=symlink
+        const v = new DataView(memory.buffer);
+        v.setUint8(stat, fd < 3 ? 2 : 4);  // char device for stdio, regular otherwise
+        v.setUint16(stat + 2, 0, true);     // fs_flags
+        v.setBigUint64(stat + 8, 0n, true); // fs_rights_base
+        v.setBigUint64(stat + 16, 0n, true);// fs_rights_inheriting
+        return 0;
+      },
+
+      // ── fd_fdstat_set_flags ──
+      fd_fdstat_set_flags: () => 0,
+
+      // ── fd_filestat_get ──
+      fd_filestat_get(fd, buf) {
+        // fill with zeros — size/times unknown
+        new Uint8Array(memory.buffer, buf, 64).fill(0);
+        return 0;
+      },
+
+      // ── fd_advise ──
+      fd_advise: () => 0,
+
+      // ── fd_allocate ──
+      fd_allocate: () => 0,
+
+      // ── fd_datasync / fd_sync ──
+      fd_datasync: () => 0,
+      fd_sync:     () => 0,
+
+      // ── fd_prestat_get — we expose no preopened dirs ──
+      fd_prestat_get: () => 8, // EBADF
+
+      // ── fd_prestat_dir_name ──
+      fd_prestat_dir_name: () => 28, // EINVAL
+
+      // ── path_open — stub (no real FS) ──
+      path_open: () => 8,
+
+      // ── path_* stubs ──
+      path_create_directory: () => 8,
+      path_remove_directory: () => 8,
+      path_unlink_file:      () => 8,
+      path_rename:           () => 8,
+      path_link:             () => 8,
+      path_symlink:          () => 8,
+      path_readlink:         () => 8,
+      path_filestat_get:     () => 8,
+      path_filestat_set_times: () => 8,
+
+      // ── environ_get / environ_sizes_get ──
+      environ_get: (environ, environ_buf) => {
+        setU32(environ, 0); return 0;
+      },
+      environ_sizes_get: (count, buf_size) => {
+        setU32(count, 0); setU32(buf_size, 0); return 0;
+      },
+
+      // ── args_get / args_sizes_get ──
+      args_get: () => 0,
+      args_sizes_get: (argc, argv_buf_size) => {
+        setU32(argc, 0); setU32(argv_buf_size, 0); return 0;
+      },
+
+      // ── proc_exit ──
+      proc_exit: (code) => { exitCode = code; throw { __exit: true, code }; },
+
+      // ── proc_raise ──
+      proc_raise: (sig) => { exitCode = 128 + sig; throw { __exit: true, code: exitCode }; },
+
+      // ── clock_time_get ──
+      clock_time_get: (id, precision, time_ptr) => {
+        // id 0=realtime, 1=monotonic — both return wall-clock nanoseconds
+        setU64(time_ptr, BigInt(Date.now()) * 1_000_000n);
+        return 0;
+      },
+
+      // ── clock_res_get ──
+      clock_res_get: (id, res_ptr) => {
+        setU64(res_ptr, 1_000_000n); // 1ms resolution
+        return 0;
+      },
+
+      // ── sched_yield ──
+      sched_yield: () => 0,
+
+      // ── random_get ──
+      random_get: (buf, buf_len) => {
+        crypto.getRandomValues(new Uint8Array(memory.buffer, buf, buf_len));
+        return 0;
+      },
+
+      // ── poll_oneoff — stub (used by some C++ runtimes for sleep) ──
+      poll_oneoff: (in_ptr, out_ptr, nsubscriptions, nevents_ptr) => {
+        setU32(nevents_ptr, 0); return 0;
+      },
+
+      // ── sock stubs ──
+      sock_accept:  () => 28,
+      sock_recv:    () => 28,
+      sock_send:    () => 28,
+      sock_shutdown:() => 28,
     }};
 
     try {
       const { instance } = await WebAssembly.instantiate(bytes, wasi);
       memory = instance.exports.memory;
       if (instance.exports._initialize) instance.exports._initialize();
+      if (instance.exports.__wasm_call_ctors) instance.exports.__wasm_call_ctors();
       instance.exports._start();
-    } catch(e) { if (!e?.__exit) { Terminal.write('\x1b[38;5;203mRuntime trap: '+(e?.message||e)+'\x1b[0m\r\n'); exitCode = 1; } }
+    } catch(e) {
+      if (!e?.__exit) {
+        Terminal.write('\x1b[38;5;203mRuntime trap: ' + (e?.message || String(e)) + '\x1b[0m\r\n');
+        exitCode = 1;
+      }
+    }
     return exitCode;
   }
 
-  // ── Worker source (inlined) ──
+  // ─────────────────────────────────────────────────────────────
+  // Worker source (inlined) — full WASI shim for interactive mode
+  // ─────────────────────────────────────────────────────────────
   function workerFn() {
     self.onmessage = async ({ data }) => {
       const { wasmBytes, sharedBuf } = data;
@@ -480,74 +731,129 @@ const Compiler = (() => {
       const dec = new TextDecoder();
       let exitCode = 0, memory;
 
+      const u32    = (ptr)       => new DataView(memory.buffer).getUint32(ptr, true);
+      const setU32 = (ptr, v)    => new DataView(memory.buffer).setUint32(ptr, v, true);
+      const setU64 = (ptr, v)    => new DataView(memory.buffer).setBigUint64(ptr, v, true);
+
+      function iov_read(iovs, iovs_len) {
+        let out = '', total = 0;
+        for (let i = 0; i < iovs_len; i++) {
+          const base = u32(iovs + i * 8), len = u32(iovs + i * 8 + 4);
+          out += dec.decode(new Uint8Array(memory.buffer, base, len));
+          total += len;
+        }
+        return { out, total };
+      }
+
       const wasi = { wasi_snapshot_preview1: {
-        fd_write(fd, iovs, iovs_len, nw) {
-          const v = new DataView(memory.buffer); let out = '', tot = 0;
-          for (let i = 0; i < iovs_len; i++) { const ptr = v.getUint32(iovs+i*8,true), len = v.getUint32(iovs+i*8+4,true); out += dec.decode(new Uint8Array(memory.buffer,ptr,len)); tot += len; }
-          v.setUint32(nw, tot, true);
-          self.postMessage({ type:'write', fd, text: out }); return 0;
+        fd_write(fd, iovs, iovs_len, nwritten) {
+          const { out, total } = iov_read(iovs, iovs_len);
+          setU32(nwritten, total);
+          self.postMessage({ type: 'write', fd, text: out });
+          return 0;
         },
-        fd_read(fd, iovs, iovs_len, nr) {
-          if (fd !== 0) { new DataView(memory.buffer).setUint32(nr,0,true); return 0; }
+        fd_read(fd, iovs, iovs_len, nread) {
+          if (fd !== 0) { setU32(nread, 0); return 0; }
           Atomics.store(ctrl, 0, 1);
-          self.postMessage({ type:'waiting-stdin' });
+          self.postMessage({ type: 'waiting-stdin' });
           Atomics.wait(ctrl, 0, 1);
           const len = Atomics.load(ctrl, 1);
           const lineBytes = dataBuf.slice(0, len);
           Atomics.store(ctrl, 0, 0);
-          const v = new DataView(memory.buffer), mem8 = new Uint8Array(memory.buffer);
+          const mem8 = new Uint8Array(memory.buffer);
           let written = 0;
           for (let i = 0; i < iovs_len && written < lineBytes.length; i++) {
-            const ptr = v.getUint32(iovs+i*8,true), cap = v.getUint32(iovs+i*8+4,true);
-            const chunk = lineBytes.slice(written, written+cap);
-            mem8.set(chunk, ptr); written += chunk.length;
+            const base = u32(iovs + i * 8), cap = u32(iovs + i * 8 + 4);
+            const chunk = lineBytes.slice(written, written + cap);
+            mem8.set(chunk, base);
+            written += chunk.length;
           }
-          v.setUint32(nr, written, true); return 0;
+          setU32(nread, written); return 0;
         },
-        fd_close:()=>0, fd_seek:()=>70,
-        fd_fdstat_get:(fd,p)=>{new DataView(memory.buffer).setUint8(p,fd<3?2:4);return 0;},
-        fd_prestat_get:()=>8, fd_prestat_dir_name:()=>28, path_open:()=>8,
-        environ_get:()=>0,
-        environ_sizes_get:(c,b)=>{const v=new DataView(memory.buffer);v.setUint32(c,0,true);v.setUint32(b,0,true);return 0;},
-        args_get:()=>0,
-        args_sizes_get:(c,b)=>{const v=new DataView(memory.buffer);v.setUint32(c,0,true);v.setUint32(b,0,true);return 0;},
-        proc_exit:(c)=>{exitCode=c;throw{__exit:true,c};},
-        clock_time_get:(id,p,ptr)=>{new DataView(memory.buffer).setBigUint64(ptr,BigInt(Date.now())*1000000n,true);return 0;},
-        clock_res_get:(id,ptr)=>{new DataView(memory.buffer).setBigUint64(ptr,1000000n,true);return 0;},
-        sched_yield:()=>0,
-        random_get:(p,l)=>{crypto.getRandomValues(new Uint8Array(memory.buffer,p,l));return 0;},
+        fd_close: () => 0,
+        fd_seek(fd, ol, oh, w, np) { setU64(np, 0n); return fd < 3 ? 70 : 0; },
+        fd_tell(fd, off) { setU64(off, 0n); return 0; },
+        fd_fdstat_get(fd, stat) {
+          const v = new DataView(memory.buffer);
+          v.setUint8(stat, fd < 3 ? 2 : 4);
+          v.setUint16(stat + 2, 0, true);
+          v.setBigUint64(stat + 8, 0n, true);
+          v.setBigUint64(stat + 16, 0n, true);
+          return 0;
+        },
+        fd_fdstat_set_flags: () => 0,
+        fd_filestat_get(fd, buf) { new Uint8Array(memory.buffer, buf, 64).fill(0); return 0; },
+        fd_advise: () => 0,
+        fd_allocate: () => 0,
+        fd_datasync: () => 0,
+        fd_sync:     () => 0,
+        fd_prestat_get:      () => 8,
+        fd_prestat_dir_name: () => 28,
+        path_open:           () => 8,
+        path_create_directory: () => 8,
+        path_remove_directory: () => 8,
+        path_unlink_file:    () => 8,
+        path_rename:         () => 8,
+        path_link:           () => 8,
+        path_symlink:        () => 8,
+        path_readlink:       () => 8,
+        path_filestat_get:   () => 8,
+        path_filestat_set_times: () => 8,
+        environ_get: () => 0,
+        environ_sizes_get: (c, b) => { setU32(c, 0); setU32(b, 0); return 0; },
+        args_get: () => 0,
+        args_sizes_get: (c, b) => { setU32(c, 0); setU32(b, 0); return 0; },
+        proc_exit: (code) => { exitCode = code; throw { __exit: true, code }; },
+        proc_raise: (sig) => { exitCode = 128 + sig; throw { __exit: true, code: exitCode }; },
+        clock_time_get: (id, prec, ptr) => { setU64(ptr, BigInt(Date.now()) * 1_000_000n); return 0; },
+        clock_res_get: (id, ptr)        => { setU64(ptr, 1_000_000n); return 0; },
+        sched_yield: () => 0,
+        random_get: (buf, len) => { crypto.getRandomValues(new Uint8Array(memory.buffer, buf, len)); return 0; },
+        poll_oneoff: (i, o, n, ne) => { setU32(ne, 0); return 0; },
+        sock_accept: () => 28, sock_recv: () => 28, sock_send: () => 28, sock_shutdown: () => 28,
       }};
 
       try {
         const { instance } = await WebAssembly.instantiate(wasmBytes, wasi);
         memory = instance.exports.memory;
         if (instance.exports._initialize) instance.exports._initialize();
+        if (instance.exports.__wasm_call_ctors) instance.exports.__wasm_call_ctors();
         instance.exports._start();
       } catch(e) {
-        if (!e?.__exit) { self.postMessage({ type:'write', fd:2, text:'Runtime trap: '+(e?.message||e)+'\n' }); exitCode=1; }
+        if (!e?.__exit) {
+          self.postMessage({ type: 'write', fd: 2, text: 'Runtime trap: ' + (e?.message || String(e)) + '\n' });
+          exitCode = 1;
+        }
       }
-      self.postMessage({ type:'done', exitCode });
+      self.postMessage({ type: 'done', exitCode });
     };
   }
 
-  // ── Web ──
+  // ─────────────────────────────────────────────────────────────
+  // Web preview
+  // ─────────────────────────────────────────────────────────────
   async function runWeb() { Preview.refresh(); Terminal.print('⚡ Preview refreshed.', 'success'); }
 
-  // ── JavaScript ──
+  // ─────────────────────────────────────────────────────────────
+  // JavaScript
+  // ─────────────────────────────────────────────────────────────
   async function runJS() {
     Terminal.print('$ node ' + State.activeFile, 'cmd');
     Terminal.print('─────────────────────────────', 'info');
     const fakeConsole = {
-      log:  (...a)=>Terminal.write('\x1b[0m'   +a.map(String).join(' ')+'\r\n'),
-      error:(...a)=>Terminal.write('\x1b[38;5;203m'+a.map(String).join(' ')+'\x1b[0m\r\n'),
-      warn: (...a)=>Terminal.write('\x1b[38;5;220m'+a.map(String).join(' ')+'\x1b[0m\r\n'),
-      info: (...a)=>Terminal.write('\x1b[38;5;69m' +a.map(String).join(' ')+'\x1b[0m\r\n'),
+      log:  (...a) => Terminal.write('\x1b[0m'          + a.map(String).join(' ') + '\r\n'),
+      error:(...a) => Terminal.write('\x1b[38;5;203m'   + a.map(String).join(' ') + '\x1b[0m\r\n'),
+      warn: (...a) => Terminal.write('\x1b[38;5;220m'   + a.map(String).join(' ') + '\x1b[0m\r\n'),
+      info: (...a) => Terminal.write('\x1b[38;5;69m'    + a.map(String).join(' ') + '\x1b[0m\r\n'),
     };
     try { new Function('console', State.files[State.activeFile])(fakeConsole); setExit(0); }
-    catch(e) { Terminal.write('\x1b[38;5;203m'+e.toString()+'\x1b[0m\r\n'); setExit(1); }
+    catch(e) { Terminal.write('\x1b[38;5;203m' + e.toString() + '\x1b[0m\r\n'); setExit(1); }
+    setStatus('ok', 'ready');
   }
 
-  // ── TypeScript ──
+  // ─────────────────────────────────────────────────────────────
+  // TypeScript
+  // ─────────────────────────────────────────────────────────────
   async function runTS() {
     Terminal.print('$ tsc ' + State.activeFile, 'cmd');
     setStatus('spin', 'transpiling…');
@@ -561,17 +867,19 @@ const Compiler = (() => {
       Terminal.print('✓ Transpiled', 'success');
       Terminal.print('─────────────────────────────', 'info');
       const fakeConsole = {
-        log:  (...a)=>Terminal.write('\x1b[0m'   +a.map(String).join(' ')+'\r\n'),
-        error:(...a)=>Terminal.write('\x1b[38;5;203m'+a.map(String).join(' ')+'\x1b[0m\r\n'),
-        warn: (...a)=>Terminal.write('\x1b[38;5;220m'+a.map(String).join(' ')+'\x1b[0m\r\n'),
+        log:  (...a) => Terminal.write('\x1b[0m'        + a.map(String).join(' ') + '\r\n'),
+        error:(...a) => Terminal.write('\x1b[38;5;203m' + a.map(String).join(' ') + '\x1b[0m\r\n'),
+        warn: (...a) => Terminal.write('\x1b[38;5;220m' + a.map(String).join(' ') + '\x1b[0m\r\n'),
       };
       try { new Function('console', out.outputFiles[0].text)(fakeConsole); setExit(0); }
-      catch(e) { Terminal.write('\x1b[38;5;203m'+e.toString()+'\x1b[0m\r\n'); setExit(1); }
-    } catch(e) { Terminal.print('TS error: '+e.message, 'stderr'); }
+      catch(e) { Terminal.write('\x1b[38;5;203m' + e.toString() + '\x1b[0m\r\n'); setExit(1); }
+    } catch(e) { Terminal.print('TS error: ' + e.message, 'stderr'); }
     setStatus('ok','ready');
   }
 
-  // ── Python ──
+  // ─────────────────────────────────────────────────────────────
+  // Python (Pyodide)
+  // ─────────────────────────────────────────────────────────────
   async function runPython() {
     if (!window._pyodide) {
       Terminal.print('⚠  Python runtime not loaded.', 'warn');
@@ -583,14 +891,10 @@ const Compiler = (() => {
     setStatus('spin', 'running…');
     const py = window._pyodide;
 
-    // Redirect stdout/stderr to StringIO so we can flush them between input() calls.
-    // input() is patched to: flush pending output → print prompt → read a line from
-    // the terminal interactively (same mechanism C++ uses).
     py.runPython(`import sys, io, builtins
 sys.stdout = io.StringIO()
 sys.stderr = io.StringIO()`);
 
-    // Helper: flush Python's StringIO stdout to the terminal right now.
     const flushOut = () => {
       try {
         const out = py.runPython('sys.stdout.getvalue()');
@@ -601,18 +905,12 @@ sys.stderr = io.StringIO()`);
       } catch(_) {}
     };
 
-    // Each call to _pyInputFn returns a Promise that resolves with the typed line.
-    // Pyodide's runPythonAsync will await JS promises returned from Python via js.globalThis,
-    // so this gives us true async terminal input without blocking the main thread.
     window._pyInputFn = (prompt) => new Promise(resolve => {
       flushOut();
       if (prompt) Terminal.write(String(prompt));
       Terminal.readLine(resolve);
     });
 
-    // Pyodide's runPythonAsync can await JS Promises returned from async Python functions.
-    // We define input() as an async def so that 'await input()' works in user code,
-    // and plain 'input()' also works because runPythonAsync handles top-level awaits.
     py.runPython(`import js, builtins
 async def _js_input(prompt=''):
     result = await js.globalThis._pyInputFn(str(prompt) if prompt else '')
@@ -633,7 +931,9 @@ builtins.input = _js_input`);
     setStatus('ok', 'Python ready');
   }
 
-  // ── init ──
+  // ─────────────────────────────────────────────────────────────
+  // Init
+  // ─────────────────────────────────────────────────────────────
   async function init() {
     setStatus('ok', 'ready');
   }

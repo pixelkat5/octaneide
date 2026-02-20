@@ -80,10 +80,9 @@ const Compiler = (() => {
     try {
       const { Wasmer } = window._WasmerSDK;
 
-      // clang.webc is too large for the git repo / Cloudflare Pages.
-      // It is hosted as a GitHub Release asset and cached in the browser after first load.
-      const CLANG_WEBC_URL = 'https://github.com/pixelkat5/octaneide/releases/download/clang-webc/clang.webc';
-      const resp = await fetch(CLANG_WEBC_URL);
+      // clang.webc is proxied through /clang-webc (Cloudflare worker adds CORS headers).
+      // The worker fetches it from GitHub Releases. Browser caches it after first load.
+      const resp = await fetch('/clang-webc');
       if (!resp.ok) {
         throw new Error(
           'clang.webc not found (HTTP ' + resp.status + '). ' +

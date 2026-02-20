@@ -36,6 +36,10 @@ const Compiler = (() => {
       else if (lang === 'python')         { showPanel('terminal'); await runPython(); }
       else if (lang === 'css')            { showPanel('preview');  await runWeb(); }
       else { Terminal.print('No runner for this file type.', 'warn'); }
+    } catch(e) {
+      Terminal.print('✗ Unexpected error: ' + e.message, 'stderr');
+      if (State.settings.showDevErrors) console.error(e);
+      setExit(1); setStatus('err', 'error');
     } finally {
       btn.disabled = false; btn.textContent = '▶ Run';
     }
@@ -50,8 +54,8 @@ const Compiler = (() => {
     setStatus('spin', 'loading Wasmer…');
 
     try {
-      const mod = await import('./vendor/wasmer/index.mjs');
-      await mod.init({ token: 'wap_803dcea5adfa7402fbd765eb488d6bd54a0c6253ffdc8fd0945df6c2be4e7c5a', module: './vendor/wasmer/wasmer_js_bg.wasm' });
+      const mod = await import('./vendor/wasmer/WasmerSDKBundled.js');
+      await mod.init({ token: 'wap_803dcea5adfa7402fbd765eb488d6bd54a0c6253ffdc8fd0945df6c2be4e7c5a', workerUrl: './vendor/wasmer/WasmerSDKBundled.js' });
       window._WasmerSDK = mod;
       _wasmerReady = true;
       Terminal.print('✓ Wasmer SDK ready.', 'success');
@@ -84,9 +88,14 @@ const Compiler = (() => {
     try {
       const { Wasmer } = window._WasmerSDK;
       _clang = await Wasmer.fromRegistry('clang/clang');
-    } finally {
       clearInterval(timer);
-      Terminal.write('\r\x1b[2K'); // clear the spinner line
+      Terminal.write('\r\x1b[2K');
+    } catch(e) {
+      clearInterval(timer);
+      Terminal.write('\r\x1b[2K');
+      Terminal.print('✗ Failed to fetch clang from Wasmer registry: ' + e.message, 'stderr');
+      Terminal.print('  Make sure you are online for the first compile (clang is ~100MB and cached after).', 'info');
+      throw e; // re-throw so runCppWasmer's catch picks it up
     }
 
     Terminal.print('✓ clang ready.', 'success');
@@ -100,21 +109,29 @@ const Compiler = (() => {
       Object.keys(State.files).find(f => FileTree.basename(f) === 'main.c')   ||
       Object.keys(State.files).find(f => f.endsWith('.cpp') || f.endsWith('.cc')) ||
       Object.keys(State.files).find(f => f.endsWith('.c'));
-    if (!entry) { Terminal.print('✗ No .cpp or .c file found.', 'stderr'); return; }
+    if (!entry) { Terminal.print('✗ No .cpp or .c file found.', 'stderr'); setExit(1); return; }
 
     const isCpp = entry.endsWith('.cpp') || entry.endsWith('.cc');
-    Terminal.print(`$ ${isCpp ? 'clang++' : 'clang'} ${entry} ${State.settings.std} ${State.settings.opt}`, 'cmd');
     setStatus('spin', 'compiling…');
 
-    // Try local server first (fast, works offline)
-    const serverOk = await runCppServer(entry, isCpp);
-    if (serverOk) return;
+    try {
+      // Try local server first (fast, works offline)
+      const serverOk = await runCppServer(entry, isCpp);
+      if (serverOk) return;
 
-    // Fall back to Wasmer in-browser compile
-    Terminal.print('⟳ No local server — trying in-browser compile…', 'info');
-    const wasmerOk = await ensureWasmer();
-    if (wasmerOk) {
+      // Fall back to Wasmer in-browser compile
+      Terminal.print('⟳ No local server — trying in-browser compile…', 'info');
+      Terminal.print(`$ ${isCpp ? 'clang++' : 'clang'} ${entry} ${State.settings.std} ${State.settings.opt}`, 'cmd');
+      const wasmerOk = await ensureWasmer();
+      if (!wasmerOk) {
+        Terminal.print('✗ Could not load Wasmer SDK. Check the browser console for details.', 'stderr');
+        setExit(1); setStatus('err', 'error'); return;
+      }
       await runCppWasmer(entry, isCpp);
+    } catch(e) {
+      Terminal.print('✗ C++ runner error: ' + e.message, 'stderr');
+      if (State.settings.showDevErrors) console.error(e);
+      setExit(1); setStatus('err', 'error');
     }
   }
 

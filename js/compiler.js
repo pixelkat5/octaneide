@@ -45,6 +45,80 @@ const Compiler = (() => {
     }
   }
 
+  // ── Godbolt (Compiler Explorer) remote compile API ──
+  // Free, no API key required. Compiles and runs via godbolt.org.
+  async function runCppGodbolt(entry, isCpp) {
+    const source = State.files[entry];
+    if (!source) { Terminal.print('✗ Source file not found: ' + entry, 'stderr'); setExit(1); return; }
+
+    const compiler = isCpp ? 'clang1900' : 'cclang1900'; // clang 19.x on godbolt
+    Terminal.print(`$ (godbolt.org) ${isCpp ? 'clang++' : 'clang'} ${entry} ${State.settings.std} ${State.settings.opt}`, 'cmd');
+    setStatus('spin', 'compiling (Godbolt)…');
+
+    // Build user flags (strip -std and -O as we pass them separately)
+    const extraFlags = (State.settings.flags || '')
+      .split(/\s+/).filter(f => f && !f.startsWith('-std') && !f.startsWith('-O'));
+
+    // Godbolt /api/compiler/<id>/compile — compile + execute
+    const body = {
+      source,
+      compiler,
+      options: {
+        userArguments: [State.settings.std, State.settings.opt, ...extraFlags].join(' '),
+        executeParameters: { stdin: '', args: '' },
+        compilerOptions: { executorRequest: true },
+        filters: { execute: true },
+        tools: [],
+      },
+      lang: isCpp ? 'c++' : 'c',
+      allowStoreCodeDebug: false,
+    };
+
+    try {
+      const resp = await fetch(
+        `https://godbolt.org/api/compiler/${compiler}/compile`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify(body),
+        }
+      );
+      if (!resp.ok) throw new Error('Godbolt API HTTP ' + resp.status);
+      const data = await resp.json();
+
+      // Print compiler stderr (warnings/errors)
+      const asmLines = data.asm || [];
+      const stderr   = (data.stderr || []).map(l => l.text).join('\n').trim();
+      const stdout   = (data.execResult?.stdout || []).map(l => l.text).join('\n');
+      const execStderr = (data.execResult?.stderr || []).map(l => l.text).join('\n').trim();
+      const buildErr  = (data.buildResult?.stderr || []).map(l => l.text).join('\n').trim();
+
+      const compileErrors = buildErr || stderr;
+      if (compileErrors) {
+        Terminal.write('\x1b[38;5;203m' + compileErrors.replace(/\n/g, '\r\n') + '\x1b[0m\r\n');
+      }
+
+      const exitCode = data.execResult?.exitCode ?? (data.code || 0);
+      const didExecute = data.execResult !== undefined;
+
+      if (!didExecute || data.code !== 0) {
+        if (!compileErrors) Terminal.print('✗ Compilation failed.', 'stderr');
+        setExit(data.code || 1); setStatus('ok', 'ready'); return;
+      }
+
+      Terminal.print('✓ Compiled — output:', 'success');
+      if (stdout) Terminal.write(stdout.replace(/\n/g, '\r\n') + (stdout.endsWith('\n') ? '' : '\r\n'));
+      if (execStderr) Terminal.write('\x1b[38;5;203m' + execStderr.replace(/\n/g, '\r\n') + '\x1b[0m\r\n');
+
+      Terminal.print(`(exit ${exitCode}) — ⚠ Ran on godbolt.org servers (no local stdin support)`, 'info');
+      setExit(exitCode); setStatus('ok', 'ready');
+    } catch (e) {
+      Terminal.print('✗ Godbolt error: ' + e.message, 'stderr');
+      Terminal.print('  Check your internet connection or switch to local server backend.', 'info');
+      setExit(1); setStatus('err', 'error');
+    }
+  }
+
   // ── Load Wasmer SDK (lazy, once) ──
   // Uses the locally-vendored copy — no CDN or registry needed.
   const WASMER_URL = '/vendor/wasmer/WasmerSDKBundled.js';
@@ -132,19 +206,38 @@ const Compiler = (() => {
     setStatus('spin', 'compiling…');
 
     try {
-      // Try local server first (fast, works offline)
+      const backend = State.settings.cppBackend || 'browsercc';
+
+      if (backend === 'server') {
+        // Server-only: fail clearly if not running
+        const serverOk = await runCppServer(entry, isCpp);
+        if (!serverOk) {
+          Terminal.print('✗ Local server not running. Start server.py or switch compiler backend in Settings.', 'stderr');
+          setExit(1); setStatus('err', 'error');
+        }
+        return;
+      }
+
+      if (backend === 'wasmer') {
+        // Try local server first, then Wasmer
+        const serverOk = await runCppServer(entry, isCpp);
+        if (serverOk) return;
+        Terminal.print('⟳ No local server — trying Wasmer in-browser compile…', 'info');
+        Terminal.print(`$ ${isCpp ? 'clang++' : 'clang'} ${entry} ${State.settings.std} ${State.settings.opt}`, 'cmd');
+        const wasmerOk = await ensureWasmer();
+        if (!wasmerOk) {
+          Terminal.print('✗ Could not load Wasmer SDK. Check the browser console for details.', 'stderr');
+          setExit(1); setStatus('err', 'error'); return;
+        }
+        await runCppWasmer(entry, isCpp);
+        return;
+      }
+
+      // Default: auto (server → Godbolt)
       const serverOk = await runCppServer(entry, isCpp);
       if (serverOk) return;
-
-      // Fall back to Wasmer in-browser compile
-      Terminal.print('⟳ No local server — trying in-browser compile…', 'info');
-      Terminal.print(`$ ${isCpp ? 'clang++' : 'clang'} ${entry} ${State.settings.std} ${State.settings.opt}`, 'cmd');
-      const wasmerOk = await ensureWasmer();
-      if (!wasmerOk) {
-        Terminal.print('✗ Could not load Wasmer SDK. Check the browser console for details.', 'stderr');
-        setExit(1); setStatus('err', 'error'); return;
-      }
-      await runCppWasmer(entry, isCpp);
+      Terminal.print('⟳ No local server — compiling via Godbolt…', 'info');
+      await runCppGodbolt(entry, isCpp);
     } catch(e) {
       Terminal.print('✗ C++ runner error: ' + e.message, 'stderr');
       if (State.settings.showDevErrors) console.error(e);

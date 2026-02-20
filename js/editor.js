@@ -6,8 +6,12 @@ const Editor = (() => {
     const MONACO_BASE = '/vendor/monaco';
     require.config({ paths: { vs: MONACO_BASE } });
     window.MonacoEnvironment = {
+      baseUrl: '/vendor/monaco/',
       getWorkerUrl: function(_moduleId, _label) {
-        return '/vendor/monaco/base/worker/workerMain.js';
+        return URL.createObjectURL(new Blob([`
+          self.MonacoEnvironment = { baseUrl: '/vendor/monaco/' };
+          importScripts('/vendor/monaco/base/worker/workerMain.js');
+        `], { type: 'application/javascript' }));
       }
     };
     require(['vs/editor/editor.main'], () => {

@@ -48,7 +48,7 @@ const Compiler = (() => {
   // ── Load Wasmer SDK (lazy, once) ──
   // Loaded from unpkg (the SDK's intended delivery method).
   // The service worker caches it after first load so subsequent uses are offline-capable.
-  const WASMER_URL = '/vendor/wasmer/WasmerSDKBundled.js'; // index.mjs renamed
+  const WASMER_URL = 'https://unpkg.com/@wasmer/sdk@latest/dist/index.mjs';
 
   async function ensureWasmer() {
     if (_wasmerReady)  return true;
@@ -58,8 +58,21 @@ const Compiler = (() => {
     setStatus('spin', 'loading Wasmer…');
 
     try {
+      // Patch fetch to strip the 'user-agent' header from Wasmer's registry requests.
+      // The Wasmer WASM binary sets a user-agent header which Firefox includes in the
+      // CORS preflight — but registry.wasmer.io doesn't allow it, causing a CORS block.
+      const _origFetch = window.fetch;
+      window.fetch = function(input, init) {
+        if (init && init.headers) {
+          const h = new Headers(init.headers);
+          h.delete('user-agent');
+          h.delete('User-Agent');
+          init = { ...init, headers: h };
+        }
+        return _origFetch.call(this, input, init);
+      };
       const mod = await import(WASMER_URL);
-      await mod.init({ workerUrl: '/vendor/wasmer/WasmerSDKBundled.js' });
+      await mod.init();
       window._WasmerSDK = mod;
       _wasmerReady = true;
       Terminal.print('✓ Wasmer SDK ready.', 'success');

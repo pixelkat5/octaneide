@@ -58,16 +58,19 @@ const Compiler = (() => {
     setStatus('spin', 'loading Wasmer…');
 
     try {
-      // Patch fetch to strip the 'user-agent' header from Wasmer's registry requests.
-      // The Wasmer WASM binary sets a user-agent header which Firefox includes in the
-      // CORS preflight — but registry.wasmer.io doesn't allow it, causing a CORS block.
+      // Intercept fetch calls to registry.wasmer.io and reroute them through
+      // our same-origin proxy at /wasmer-graphql, which strips the user-agent
+      // header that causes CORS preflight failures.
       const _origFetch = window.fetch;
       window.fetch = function(input, init) {
-        if (init && init.headers) {
-          const h = new Headers(init.headers);
-          h.delete('user-agent');
-          h.delete('User-Agent');
-          init = { ...init, headers: h };
+        const url = (typeof input === 'string') ? input : input.url;
+        if (url && url.includes('registry.wasmer.io')) {
+          const newUrl = '/wasmer-graphql';
+          const headers = new Headers((init && init.headers) || {});
+          headers.delete('user-agent');
+          headers.delete('User-Agent');
+          init = { ...(init || {}), headers };
+          input = (typeof input === 'string') ? newUrl : new Request(newUrl, input);
         }
         return _origFetch.call(this, input, init);
       };

@@ -4,7 +4,7 @@
  * stripping the user-agent header that causes CORS preflight failures.
  */
 
-const TARGET = "https://registry.wasmer.io/graphql";
+const TARGET = "https://registry.wasmer.io/v3/graphql";
 
 export default {
   async fetch(request, env) {

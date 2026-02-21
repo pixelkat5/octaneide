@@ -1,11 +1,15 @@
 // ── Compiler ──────────────────────────────────────────────────
 const Compiler = (() => {
 
-  // Wasmer SDK state — loaded lazily on first C/C++ compile
-  let _wasmerReady  = false;
-  let _wasmerFailed = false;
-  let _clang        = null;
+  // ─────────────────────────────────────────────────────────────
+  // browsercc CDN URLs  (all served from jsDelivr, no server needed)
+  // ─────────────────────────────────────────────────────────────
+  const BROWSERCC_BASE   = 'https://cdn.jsdelivr.net/npm/browsercc@0.1.1/dist';
+  const WASI_SHIM_URL    = 'https://esm.sh/@bjorn3/browser_wasi_shim@0.4.2/es2022/browser_wasi_shim.mjs';
 
+  // ─────────────────────────────────────────────────────────────
+  // Status helpers
+  // ─────────────────────────────────────────────────────────────
   function setStatus(s, msg) {
     document.getElementById('status-dot').className = 'dot ' + s;
     document.getElementById('status-text').textContent = msg;
@@ -18,6 +22,9 @@ const Compiler = (() => {
     el.className = code === 0 ? 'ok' : 'err';
   }
 
+  // ─────────────────────────────────────────────────────────────
+  // Run dispatcher
+  // ─────────────────────────────────────────────────────────────
   async function run() {
     Editor.flush();
     if (!State.activeFile) return;
@@ -46,305 +53,32 @@ const Compiler = (() => {
   }
 
   // ─────────────────────────────────────────────────────────────
-  // Godbolt (Compiler Explorer) — remote compile & execute API
-  // ─────────────────────────────────────────────────────────────
-  // Compiler IDs in priority order. We probe them once and cache the winner.
-  const GODBOLT_CPP_COMPILERS = ['clang1900', 'clang1800', 'clang1700', 'clang1601', 'g132', 'g122', 'g112'];
-  const GODBOLT_C_COMPILERS   = ['clang1900', 'clang1800', 'clang1700', 'clang1601', 'g132', 'g122'];
-
-  // Cache the working compiler id so we don't probe on every run
-  let _godboltCppCompiler = null;
-  let _godboltCCompiler   = null;
-
-  async function _probeGodboltCompiler(candidates) {
-    // Probe with a trivial program to find first working compiler
-    const probe = { source: 'int main(){}', options: { userArguments: '', executeParameters: { stdin: '', args: '' }, compilerOptions: { executorRequest: true }, filters: { execute: true }, tools: [] }, lang: 'c++', allowStoreCodeDebug: false };
-    for (const id of candidates) {
-      try {
-        const r = await fetch(`https://godbolt.org/api/compiler/${id}/compile`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-          body: JSON.stringify({ ...probe, compiler: id }),
-          signal: AbortSignal.timeout(8000),
-        });
-        if (r.status !== 404 && r.ok) return id;
-      } catch(_) {}
-    }
-    return null;
-  }
-
-  async function tryGodboltCompile(source, compilerId, isCpp, extraFlags, userStdin) {
-    const body = {
-      source,
-      compiler: compilerId,
-      options: {
-        userArguments: [State.settings.std, State.settings.opt, ...extraFlags].join(' ').trim(),
-        executeParameters: { stdin: userStdin || '', args: '' },
-        compilerOptions: { executorRequest: true },
-        filters: { execute: true },
-        tools: [],
-      },
-      lang: isCpp ? 'c++' : 'c',
-      allowStoreCodeDebug: false,
-    };
-    const resp = await fetch(
-      `https://godbolt.org/api/compiler/${compilerId}/compile`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(30000),
-      }
-    );
-    return resp;
-  }
-
-  async function runCppGodbolt(entry, isCpp) {
-    const source = State.files[entry];
-    if (!source) { Terminal.print('✗ Source file not found: ' + entry, 'stderr'); setExit(1); return; }
-
-    // Check multi-file: Godbolt only handles single files, warn if more
-    const cppFiles = Object.keys(State.files).filter(f => f.endsWith('.cpp') || f.endsWith('.c') || f.endsWith('.h') || f.endsWith('.hpp'));
-    if (cppFiles.length > 1) {
-      Terminal.print('⚠ Godbolt only compiles single files. Using: ' + entry, 'warn');
-      Terminal.print('  For multi-file projects, use the local server backend (server.py).', 'info');
-    }
-
-    // ── stdin: collect before compiling (Godbolt needs it upfront) ──
-    let stdin = '';
-    const needsInput = /\b(cin\s*>>|scanf\s*\(|getline\s*\(|gets\s*\(|fgets\s*\(|read\s*\(|getchar\s*\()/i.test(source);
-    if (needsInput) {
-      Terminal.print('⚠ This program reads stdin. Enter input below, then Ctrl+D when done.', 'warn');
-      stdin = await Terminal.promptStdin();
-    }
-
-    setStatus('spin', 'compiling (Godbolt)…');
-    Terminal.print(`$ (godbolt.org) ${isCpp ? 'clang++' : 'clang'} ${entry} ${State.settings.std} ${State.settings.opt}`, 'cmd');
-
-    // Extra flags: strip -std and -O since we pass them separately
-    const extraFlags = (State.settings.flags || '')
-      .split(/\s+/).filter(f => f && !f.startsWith('-std') && !f.startsWith('-O'));
-
-    // Find/cache working compiler
-    const candidates = isCpp ? GODBOLT_CPP_COMPILERS : GODBOLT_C_COMPILERS;
-    if (isCpp && !_godboltCppCompiler) {
-      Terminal.print('  detecting available compiler…', 'info');
-      _godboltCppCompiler = await _probeGodboltCompiler(candidates);
-    }
-    if (!isCpp && !_godboltCCompiler) {
-      Terminal.print('  detecting available compiler…', 'info');
-      _godboltCCompiler = await _probeGodboltCompiler(candidates);
-    }
-    const compilerId = isCpp ? _godboltCppCompiler : _godboltCCompiler;
-
-    if (!compilerId) {
-      Terminal.print('✗ Could not find a working Godbolt compiler. Check your internet connection.', 'stderr');
-      Terminal.print('  Try switching to the local server backend in Settings → C/C++ → Compiler backend.', 'info');
-      setExit(1); setStatus('err', 'error'); return;
-    }
-
-    try {
-      setStatus('spin', `compiling (${compilerId})…`);
-      const resp = await tryGodboltCompile(source, compilerId, isCpp, extraFlags, stdin);
-
-      if (!resp.ok) {
-        // Invalidate cached compiler on 404 (retired)
-        if (resp.status === 404) {
-          if (isCpp) _godboltCppCompiler = null;
-          else       _godboltCCompiler   = null;
-        }
-        throw new Error('Godbolt API HTTP ' + resp.status);
-      }
-
-      const data = await resp.json();
-
-      if (State.settings.showDevErrors) console.log('[Godbolt response]', JSON.stringify(data).slice(0, 2000));
-
-      // ── Extract compile diagnostics ──
-      // Godbolt executor mode puts diagnostics in buildResult.stderr
-      // Non-executor mode puts them in data.stderr
-      const buildStderr   = (data.buildResult?.stderr || []).map(l => l.text || '').join('\n').trim();
-      const compileStderr = (data.stderr || []).map(l => l.text || '').join('\n').trim();
-      const compileErrors = buildStderr || compileStderr;
-
-      function printDiagnostics(text) {
-        text.split('\n').forEach(line => {
-          if (!line) return;
-          const isError = /\berror\b/i.test(line);
-          const isWarn  = /\bwarning\b/i.test(line);
-          if (isError)     Terminal.write('\x1b[38;5;203m' + line + '\x1b[0m\r\n');
-          else if (isWarn) Terminal.write('\x1b[38;5;220m' + line + '\x1b[0m\r\n');
-          else             Terminal.write('\x1b[38;5;244m' + line + '\x1b[0m\r\n');
-        });
-      }
-
-      // ── Determine build success ──
-      // buildResult.exitCode is most reliable; fall back to data.code
-      const buildCode = data.buildResult?.exitCode ?? data.code ?? 0;
-
-      // In executor mode the response has an execResult block.
-      // In some Godbolt versions it's at data.execResult, in others at data.buildResult.execResult
-      const execResult = data.execResult ?? data.buildResult?.execResult ?? null;
-
-      if (buildCode !== 0) {
-        // Compile error
-        if (compileErrors) printDiagnostics(compileErrors);
-        else Terminal.print('✗ Compilation failed (exit ' + buildCode + ').', 'stderr');
-        setExit(buildCode); setStatus('ok', 'ready'); return;
-      }
-
-      // Build succeeded — print any warnings
-      if (compileErrors) printDiagnostics(compileErrors);
-
-      if (!execResult) {
-        // Compiled OK but Godbolt didn't execute (shouldn't happen with executorRequest:true,
-        // but handle gracefully — show asm or just confirm compile success)
-        Terminal.print('✓ Compiled successfully (no execution result returned by Godbolt).', 'success');
-        Terminal.print('  If you expected output, check Settings → C/C++ → Compiler backend.', 'info');
-        setExit(0); setStatus('ok', 'ready'); return;
-      }
-
-      const execExitCode = execResult.exitCode ?? 0;
-      const stdout       = (execResult.stdout || []).map(l => l.text ?? '').join('\n');
-      const execStderr   = (execResult.stderr || []).map(l => l.text ?? '').join('\n').trim();
-
-      Terminal.print(compileErrors ? '⚠ Compiled with warnings — output:' : '✓ Compiled — output:', compileErrors ? 'warn' : 'success');
-
-      if (stdout) {
-        Terminal.write('\x1b[0m' + stdout.replace(/\n/g, '\r\n'));
-        if (!stdout.endsWith('\n')) Terminal.write('\r\n');
-      }
-      if (execStderr) {
-        Terminal.write('\x1b[38;5;203m' + execStderr.replace(/\n/g, '\r\n') + '\x1b[0m\r\n');
-      }
-      if (!stdout && !execStderr) {
-        Terminal.print('(no output)', 'info');
-      }
-
-      Terminal.print(
-        `─── exit ${execExitCode} · ran on godbolt.org${needsInput ? ' · stdin pre-collected' : ''} ───`,
-        execExitCode === 0 ? 'info' : 'warn'
-      );
-      setExit(execExitCode); setStatus('ok', 'ready');
-
-    } catch (e) {
-      Terminal.print('✗ Godbolt error: ' + e.message, 'stderr');
-      if (e.name === 'TimeoutError') {
-        Terminal.print('  Request timed out. Godbolt may be slow or down.', 'info');
-      }
-      Terminal.print('  Tip: run  python server.py  locally for offline compilation.', 'info');
-      setExit(1); setStatus('err', 'error');
-    }
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  // Wasmer in-browser compile (clang.webc)
-  // ─────────────────────────────────────────────────────────────
-  const WASMER_URL = '/vendor/wasmer/WasmerSDKBundled.js';
-
-  async function ensureWasmer() {
-    if (_wasmerReady)  return true;
-    if (_wasmerFailed) return false;
-    Terminal.print('⟳ Loading Wasmer SDK…', 'info');
-    setStatus('spin', 'loading Wasmer…');
-    try {
-      const mod = await import(WASMER_URL);
-      await mod.init();
-      window._WasmerSDK = mod;
-      _wasmerReady = true;
-      Terminal.print('✓ Wasmer SDK ready.', 'success');
-      return true;
-    } catch (e) {
-      _wasmerFailed = true;
-      Terminal.print('✗ Failed to load Wasmer SDK: ' + e.message, 'stderr');
-      return false;
-    }
-  }
-
-  async function ensureClang() {
-    if (_clang) return _clang;
-    Terminal.print('⟳ Loading clang from vendor…', 'info');
-    setStatus('spin', 'loading clang…');
-    try {
-      const { Wasmer } = window._WasmerSDK;
-      const resp = await fetch('/clang-webc');
-      if (!resp.ok) {
-        throw new Error(
-          'clang.webc not found (HTTP ' + resp.status + '). ' +
-          'Run  python download_deps.py  to download it (~100 MB, one-time).'
-        );
-      }
-      Terminal.print('  clang.webc found — loading (~100 MB, please wait)…', 'info');
-      const frames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
-      let fi = 0, elapsed = 0;
-      const timer = setInterval(() => {
-        elapsed++;
-        const mins = String(Math.floor(elapsed / 60)).padStart(1,'0');
-        const secs = String(elapsed % 60).padStart(2,'0');
-        Terminal.write(`\r\x1b[38;5;69m  ${frames[fi++ % frames.length]} loading clang… ${mins}:${secs}\x1b[0m`);
-      }, 1000);
-      try {
-        const blob = await resp.blob();
-        const file = new File([blob], 'clang.webc');
-        _clang = await Wasmer.fromFile(file);
-      } finally {
-        clearInterval(timer);
-        Terminal.write('\r\x1b[2K');
-      }
-    } catch(e) {
-      Terminal.print('✗ Failed to load clang: ' + e.message, 'stderr');
-      throw e;
-    }
-    Terminal.print('✓ clang ready.', 'success');
-    return _clang;
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  // C / C++ entry point — tries: server → Godbolt → Wasmer
+  // C / C++ entry point
+  // Pipeline: server.py (local dev only) → browsercc (always offline after first load)
   // ─────────────────────────────────────────────────────────────
   async function runCpp() {
+    // Find entry file: prefer main.cpp, then main.c, then any .cpp, then any .c
     const entry =
       Object.keys(State.files).find(f => FileTree.basename(f) === 'main.cpp') ||
       Object.keys(State.files).find(f => FileTree.basename(f) === 'main.c')   ||
       Object.keys(State.files).find(f => f.endsWith('.cpp') || f.endsWith('.cc')) ||
       Object.keys(State.files).find(f => f.endsWith('.c'));
-    if (!entry) { Terminal.print('✗ No .cpp or .c file found.', 'stderr'); setExit(1); return; }
+
+    if (!entry) {
+      Terminal.print('✗ No .cpp or .c file found in project.', 'stderr');
+      setExit(1); setStatus('err', 'error'); return;
+    }
 
     const isCpp = entry.endsWith('.cpp') || entry.endsWith('.cc');
-    const backend = State.settings.cppBackend || 'browsercc';
     setStatus('spin', 'compiling…');
 
     try {
-      if (backend === 'server') {
-        const ok = await runCppServer(entry, isCpp);
-        if (!ok) {
-          Terminal.print('✗ Local server not running.', 'stderr');
-          Terminal.print('  Start it with:  python server.py', 'info');
-          Terminal.print('  Or switch to another backend in ⚙ Settings → C/C++.', 'info');
-          setExit(1); setStatus('err', 'error');
-        }
-        return;
-      }
-
-      if (backend === 'wasmer') {
-        const serverOk = await runCppServer(entry, isCpp);
-        if (serverOk) return;
-        Terminal.print('⟳ No local server — using Wasmer in-browser compile…', 'info');
-        Terminal.print(`$ ${isCpp ? 'clang++' : 'clang'} ${entry} ${State.settings.std} ${State.settings.opt}`, 'cmd');
-        if (!await ensureWasmer()) {
-          Terminal.print('✗ Could not load Wasmer SDK.', 'stderr');
-          setExit(1); setStatus('err', 'error'); return;
-        }
-        await runCppWasmer(entry, isCpp);
-        return;
-      }
-
-      // Default (browsercc): server → Godbolt → Wasmer fallback
+      // server.py — only used for local dev, skipped silently if not running
       const serverOk = await runCppServer(entry, isCpp);
       if (serverOk) return;
 
-      Terminal.print('⟳ No local server — compiling via Godbolt…', 'info');
-      await runCppGodbolt(entry, isCpp);
+      // browsercc — fully offline after first load
+      await runCppBrowsercc(entry, isCpp);
 
     } catch(e) {
       Terminal.print('✗ C++ runner error: ' + e.message, 'stderr');
@@ -354,110 +88,457 @@ const Compiler = (() => {
   }
 
   // ─────────────────────────────────────────────────────────────
-  // Wasmer in-browser compile path
+  // browsercc pipeline
+  // Uses a Web Worker that runs the entire compile+link+execute cycle.
+  // All heavy WASM files are fetched once and cached by the service worker.
   // ─────────────────────────────────────────────────────────────
-  async function runCppWasmer(entry, isCpp) {
-    try {
-      const clang = await ensureClang();
-      const { Directory } = window._WasmerSDK;
-
-      const project = new Directory();
-      const filesToSend = { ...State.files };
-      for (const id of State.settings.downloadedLibs) {
-        const lib = LIBRARIES.find(l => l.id === id);
-        if (lib) { const data = await Persist.loadLib(id); if (data) filesToSend[lib.path] = data; }
-      }
-      for (const [name, content] of Object.entries(filesToSend)) {
-        await project.writeFile(name, content);
+  function runCppBrowsercc(entry, isCpp) {
+    return new Promise((resolve, reject) => {
+      // Build file map to send to worker
+      const files = {};
+      for (const [name, src] of Object.entries(State.files)) {
+        files[name] = src;
       }
 
-      const args = [
-        `/project/${entry}`,
-        '-o', '/project/a.out',
-        State.settings.std,
-        State.settings.opt,
-        '-I/project',
-      ];
-      if (isCpp) {
-        const userFlags = (State.settings.flags || '').split(/\s+/).filter(Boolean);
-        if (!userFlags.includes('-fexceptions')) args.push('-fno-exceptions', '-fno-rtti');
-        args.push('-lc++', '-lc++abi');
+      const std   = State.settings.std  || (isCpp ? '-std=c++17' : '-std=c11');
+      const opt   = State.settings.opt  || '-O1';
+      const flags = State.settings.flags || '';
+
+      Terminal.print(
+        `$ ${isCpp ? 'clang++' : 'clang'} ${entry} ${std} ${opt}${flags ? ' ' + flags : ''}`,
+        'cmd'
+      );
+      setStatus('spin', 'compiling (browsercc)…');
+
+      // Inline the worker function — avoids needing a separate worker file
+      // and works on Cloudflare Pages with no extra build step.
+      const workerSrc = `(${_browserccWorker.toString()})()`;
+      const workerBlob = new Blob([workerSrc], { type: 'application/javascript' });
+      const workerUrl  = URL.createObjectURL(workerBlob);
+      const worker     = new Worker(workerUrl);
+
+      // SharedArrayBuffer for interactive stdin (requires COOP/COEP headers)
+      let sharedBuf = null;
+      if (typeof SharedArrayBuffer !== 'undefined') {
+        sharedBuf = new SharedArrayBuffer(64 * 1024); // 64 KB stdin buffer
       }
-      if (State.settings.flags) args.push(...State.settings.flags.split(/\s+/).filter(Boolean));
 
-      setStatus('spin', 'compiling (Wasmer)…');
-      Terminal.print('  compiling…', 'info');
+      worker.onmessage = ({ data }) => {
+        switch (data.type) {
 
-      const compileInstance = await clang.entrypoint.run({ args, mount: { '/project': project } });
-      const dec = new TextDecoder();
-      const stderrPipe = compileInstance.stderr.pipeTo(new WritableStream({
-        write(chunk) {
-          const text = dec.decode(chunk).replace(/\n/g, '\r\n');
-          Terminal.write('\x1b[38;5;203m' + text + '\x1b[0m');
+          case 'status':
+            setStatus('spin', data.text);
+            break;
+
+          case 'stdout':
+            Terminal.write('\x1b[0m' + data.text.replace(/\n/g, '\r\n'));
+            break;
+
+          case 'stderr': {
+            // Colour-code compile diagnostics
+            data.text.split('\n').forEach(line => {
+              if (!line) return;
+              if (/\berror\b/i.test(line))        Terminal.write('\x1b[38;5;203m' + line + '\x1b[0m\r\n');
+              else if (/\bwarning\b/i.test(line)) Terminal.write('\x1b[38;5;220m' + line + '\x1b[0m\r\n');
+              else if (/\bnote\b/i.test(line))    Terminal.write('\x1b[38;5;244m' + line + '\x1b[0m\r\n');
+              else                                Terminal.write('\x1b[38;5;244m' + line + '\x1b[0m\r\n');
+            });
+            break;
+          }
+
+          case 'waiting-stdin':
+            // Program called read()/cin >> — prompt user interactively
+            if (sharedBuf) {
+              Terminal.startInteractiveInput(sharedBuf);
+            } else {
+              // Fallback: can't do synchronous stdin without SAB
+              const ctrl = new Int32Array(data.sharedBuf, 0, 2);
+              Atomics.store(ctrl, 1, 0);
+              Atomics.store(ctrl, 0, 0);
+              Atomics.notify(ctrl, 0);
+            }
+            break;
+
+          case 'stdin-done':
+            Terminal.stopInteractiveInput();
+            break;
+
+          case 'compile-ok':
+            Terminal.print('✓ Compiled — running…', 'success');
+            setStatus('spin', 'running…');
+            break;
+
+          case 'compile-error':
+            Terminal.print(`✗ Compilation failed (exit ${data.exitCode}).`, 'stderr');
+            setExit(data.exitCode || 1);
+            setStatus('ok', 'ready');
+            worker.terminate();
+            URL.revokeObjectURL(workerUrl);
+            resolve();
+            break;
+
+          case 'done':
+            Terminal.print(
+              `─── exit ${data.exitCode} · browsercc/clang ───`,
+              data.exitCode === 0 ? 'info' : 'warn'
+            );
+            setExit(data.exitCode);
+            setStatus('ok', 'ready');
+            worker.terminate();
+            URL.revokeObjectURL(workerUrl);
+            resolve();
+            break;
+
+          case 'error':
+            Terminal.print('✗ browsercc error: ' + data.message, 'stderr');
+            if (data.stack && State.settings.showDevErrors) console.error(data.stack);
+            setExit(1); setStatus('err', 'error');
+            worker.terminate();
+            URL.revokeObjectURL(workerUrl);
+            resolve();
+            break;
         }
-      })).catch(() => {});
+      };
 
-      const TIMEOUT_MS = 5 * 60 * 1000;
-      let compileOutput;
-      try {
-        compileOutput = await Promise.race([
-          compileInstance.wait(),
-          new Promise((_, rej) => setTimeout(() => rej(new Error('Compilation timed out after 5 minutes')), TIMEOUT_MS))
-        ]);
-      } catch (e) {
-        Terminal.print('✗ ' + e.message, 'stderr');
-        setExit(1); setStatus('ok', 'ready');
-        return true;
-      }
+      worker.onerror = (e) => {
+        Terminal.print('✗ Worker error: ' + (e.message || String(e)), 'stderr');
+        setExit(1); setStatus('err', 'error');
+        URL.revokeObjectURL(workerUrl);
+        reject(e);
+      };
 
-      if (compileOutput.stdout && compileOutput.stdout.trim()) {
-        Terminal.write('\x1b[38;5;203m' + compileOutput.stdout.trim().replace(/\n/g, '\r\n') + '\x1b[0m\r\n');
-      }
-
-      if (!compileOutput.ok) {
-        Terminal.print(`✗ Compilation failed (exit ${compileOutput.code})`, 'stderr');
-        setExit(compileOutput.code || 1); setStatus('ok', 'ready');
-        return true;
-      }
-
-      Terminal.print('✓ Compiled — running…', 'success');
-      setStatus('spin', 'running…');
-
-      let wasmBytes;
-      try {
-        wasmBytes = await project.readFile('a.out');
-      } catch(e) {
-        Terminal.print('✗ Could not read compiled output: ' + e.message, 'stderr');
-        setExit(1); setStatus('ok', 'ready');
-        return true;
-      }
-
-      const interactive = State.settings.interactiveStdin;
-      let exitCode;
-      if (interactive && typeof SharedArrayBuffer !== 'undefined') {
-        exitCode = await runWasmInteractive(wasmBytes);
-      } else {
-        if (interactive) Terminal.print('⚠ Interactive stdin unavailable — using pre-collect mode.', 'warn');
-        const stdin = await Terminal.promptStdin();
-        exitCode = await runWasmInline(wasmBytes, stdin);
-      }
-      setExit(exitCode); setStatus('ok', 'ready');
-      return true;
-
-    } catch (e) {
-      Terminal.print('✗ Wasmer error: ' + e.message, 'stderr');
-      console.error('Wasmer compile error:', e);
-      return false;
-    }
+      worker.postMessage({
+        files,
+        entry,
+        isCpp,
+        std,
+        opt,
+        flags,
+        sharedBuf,
+        browserccBase: BROWSERCC_BASE,
+        wasiShimUrl:   WASI_SHIM_URL,
+      });
+    });
   }
 
   // ─────────────────────────────────────────────────────────────
-  // Local server (server.py) path
-  // Returns true if server handled the request, false if server isn't running.
+  // Web Worker source — runs inside a blob worker.
+  //
+  // Pipeline:
+  //   1. Fetch clang.js + lld.js (emscripten glue modules)
+  //   2. Fetch clang.wasm + lld.wasm + sysroot.tar (cached by SW after first load)
+  //   3. Run clang to compile .cpp → .o (WASM object)
+  //   4. Run lld to link .o → final WASM binary
+  //   5. Run final WASM with @bjorn3/browser_wasi_shim
+  //
+  // All communication back to main thread is via postMessage.
+  // ─────────────────────────────────────────────────────────────
+  function _browserccWorker() {
+    let browserccBase, wasiShimUrl;
+
+    // ── Helpers ──────────────────────────────────────────────
+    function post(type, extra = {}) {
+      self.postMessage({ type, ...extra });
+    }
+
+    // Load browsercc module (returns { clang, lld, ... })
+    async function loadBrowsercc() {
+      post('status', { text: 'loading compiler…' });
+      // Import the main browsercc index which re-exports clang + lld helpers
+      const { default: BrowserCC } = await import(`${browserccBase}/index.js`);
+      return BrowserCC;
+    }
+
+    // Unpack sysroot.tar into an in-memory map { path → Uint8Array }
+    async function fetchSysroot() {
+      post('status', { text: 'loading sysroot…' });
+      const resp = await fetch(`${browserccBase}/sysroot.tar`);
+      if (!resp.ok) throw new Error('Failed to fetch sysroot.tar: ' + resp.status);
+      const buf  = await resp.arrayBuffer();
+      return parseTar(new Uint8Array(buf));
+    }
+
+    // Minimal tar parser — handles ustar and old-style POSIX tars
+    function parseTar(data) {
+      const files = {};
+      const dec = new TextDecoder();
+      let offset = 0;
+      while (offset + 512 <= data.length) {
+        const header = data.slice(offset, offset + 512);
+        // Check for end-of-archive (two 512-byte zero blocks)
+        if (header.every(b => b === 0)) { offset += 512; continue; }
+        const name = dec.decode(header.slice(0, 100)).replace(/\0.*$/, '');
+        if (!name) { offset += 512; continue; }
+        const sizeStr = dec.decode(header.slice(124, 136)).replace(/\0.*$/, '').trim();
+        const size    = parseInt(sizeStr, 8) || 0;
+        const type    = String.fromCharCode(header[156]);
+        // prefix field (ustar)
+        const prefix  = dec.decode(header.slice(345, 500)).replace(/\0.*$/, '');
+        const fullName = prefix ? prefix + '/' + name : name;
+        offset += 512; // past header
+        if (type === '0' || type === '' || type === '\0') {
+          // Regular file
+          files['/' + fullName.replace(/^\//, '')] = data.slice(offset, offset + size);
+        }
+        // Advance past file data, rounded up to 512-byte blocks
+        offset += Math.ceil(size / 512) * 512;
+      }
+      return files;
+    }
+
+    // Run clang (or lld) with a virtual FS and return { exitCode, stderr }
+    async function runTool(moduleFactory, args, inputFiles, outputPath) {
+      return new Promise((resolve) => {
+        let stderr = '';
+        let exitCode = 0;
+
+        const Module = moduleFactory({
+          noInitialRun: true,
+          print:    () => {},
+          printErr: (text) => { stderr += text + '\n'; },
+          quit: (code) => { exitCode = code; },
+          preRun: [(m) => {
+            // Write all input files into emscripten's virtual FS
+            for (const [path, data] of Object.entries(inputFiles)) {
+              const parts = path.split('/').filter(Boolean);
+              // Create parent dirs
+              let cur = '';
+              for (let i = 0; i < parts.length - 1; i++) {
+                cur += '/' + parts[i];
+                try { m.FS.mkdir(cur); } catch(_) {}
+              }
+              m.FS.writeFile(path, data);
+            }
+          }],
+        });
+
+        Module.then(m => {
+          try {
+            m.callMain(args);
+          } catch(e) {
+            if (typeof e === 'number') exitCode = e;
+            else if (e && e.status !== undefined) exitCode = e.status;
+            else exitCode = 1;
+          }
+          // Read output file if requested
+          let output = null;
+          if (outputPath) {
+            try { output = m.FS.readFile(outputPath); } catch(_) {}
+          }
+          resolve({ exitCode, stderr: stderr.trim(), output });
+        }).catch(e => {
+          resolve({ exitCode: 1, stderr: e.message, output: null });
+        });
+      });
+    }
+
+    // ── Main message handler ──────────────────────────────────
+    self.onmessage = async ({ data }) => {
+      const { files, entry, isCpp, std, opt, flags, sharedBuf } = data;
+      browserccBase = data.browserccBase;
+      wasiShimUrl   = data.wasiShimUrl;
+
+      try {
+        // ── Step 1: Load browsercc modules ──
+        post('status', { text: 'loading clang…' });
+
+        // Import clang.js and lld.js — these are emscripten-generated module factories
+        const [clangMod, lldMod] = await Promise.all([
+          import(`${browserccBase}/clang.js`).then(m => m.default || m),
+          import(`${browserccBase}/lld.js`).then(m => m.default || m),
+        ]);
+
+        // ── Step 2: Load sysroot (C++ standard headers + libs) ──
+        post('status', { text: 'loading sysroot…' });
+        const resp = await fetch(`${browserccBase}/sysroot.tar`);
+        if (!resp.ok) throw new Error('Failed to fetch sysroot.tar: HTTP ' + resp.status);
+        const tarBuf  = await resp.arrayBuffer();
+        const sysroot = parseTar(new Uint8Array(tarBuf));
+
+        // ── Step 3: Compile with clang ──
+        post('status', { text: 'compiling…' });
+
+        // Build the virtual FS for clang: user source files + sysroot
+        const clangFS = {};
+
+        // Add sysroot files
+        for (const [p, d] of Object.entries(sysroot)) clangFS[p] = d;
+
+        // Add user source files under /src/
+        const enc = new TextEncoder();
+        for (const [name, src] of Object.entries(files)) {
+          clangFS['/src/' + name] = enc.encode(src);
+        }
+
+        // Also try to load the precompiled stdc++.h.pch header for speed
+        let pchData = null;
+        try {
+          const pchResp = await fetch(`${browserccBase}/stdc++.h.pch`);
+          if (pchResp.ok) pchData = new Uint8Array(await pchResp.arrayBuffer());
+        } catch(_) {}
+        if (pchData) clangFS['/usr/include/c++/v1/stdc++.h.pch'] = pchData;
+
+        const clangArgs = [
+          isCpp ? 'clang++' : 'clang',
+          `/src/${entry}`,
+          '-o', '/out/output.o',
+          '-c',          // compile only, no link
+          std,
+          opt,
+          '-isysroot', '/',
+          '-I/usr/include',
+          '-I/usr/include/c++/v1',
+          '-I/src',
+          '--target=wasm32-wasi',
+          '-fno-exceptions',   // keeps output .o simpler; remove if project needs exceptions
+        ];
+        if (flags) clangArgs.push(...flags.split(/\s+/).filter(Boolean));
+
+        // Ensure /out dir exists
+        clangFS['/out/.keep'] = new Uint8Array(0);
+
+        const compile = await runTool(clangMod, clangArgs, clangFS, '/out/output.o');
+
+        if (compile.stderr) post('stderr', { text: compile.stderr });
+
+        if (compile.exitCode !== 0 || !compile.output) {
+          post('compile-error', { exitCode: compile.exitCode || 1 });
+          return;
+        }
+
+        post('compile-ok');
+
+        // ── Step 4: Link with lld ──
+        post('status', { text: 'linking…' });
+
+        const lldFS = {};
+        // Add sysroot libs
+        for (const [p, d] of Object.entries(sysroot)) lldFS[p] = d;
+        // Add compiled object
+        lldFS['/out/output.o'] = compile.output;
+
+        const lldArgs = [
+          'wasm-ld',
+          '/out/output.o',
+          '-o', '/out/a.wasm',
+          '--no-entry',
+          '--export-dynamic',
+          '--allow-undefined',
+          '-L/usr/lib/wasm32-wasi',
+          isCpp ? '-lc++ -lc++abi -lc' : '-lc',
+          '-lwasi-emulated-mman',
+        ];
+
+        const link = await runTool(lldMod, lldArgs, lldFS, '/out/a.wasm');
+
+        if (link.stderr) post('stderr', { text: link.stderr });
+
+        if (link.exitCode !== 0 || !link.output) {
+          post('compile-error', { exitCode: link.exitCode || 1 });
+          return;
+        }
+
+        // ── Step 5: Execute with @bjorn3/browser_wasi_shim ──
+        post('status', { text: 'running…' });
+
+        const { WASI, File, OpenFile, ConsoleStdout, PreopenDirectory, Directory } =
+          await import(wasiShimUrl);
+
+        // Capture output
+        let stdoutBuf = '';
+        let stderrBuf = '';
+
+        // stdin handling
+        let stdinBytes = new Uint8Array(0);
+        let stdinPos   = 0;
+
+        let stdinFile;
+        if (sharedBuf) {
+          // Interactive: use SharedArrayBuffer for synchronous reads from main thread
+          const ctrl    = new Int32Array(sharedBuf, 0, 2);
+          const dataBuf = new Uint8Array(sharedBuf, 8);
+          let   pending = false;
+
+          stdinFile = new File([], {
+            read(len) {
+              if (!pending) {
+                pending = true;
+                Atomics.store(ctrl, 0, 1);
+                post('waiting-stdin', { sharedBuf });
+                Atomics.wait(ctrl, 0, 1); // blocks worker thread until main thread writes
+                pending = false;
+              }
+              const n = Atomics.load(ctrl, 1);
+              const chunk = dataBuf.slice(0, n);
+              Atomics.store(ctrl, 0, 0);
+              Atomics.notify(ctrl, 0);
+              post('stdin-done');
+              return chunk;
+            }
+          });
+        } else {
+          // Non-interactive: empty stdin
+          stdinFile = new File([]);
+        }
+
+        const flushStdout = ConsoleStdout.lineBuffered(line => {
+          post('stdout', { text: line + '\n' });
+        });
+        const flushStderr = ConsoleStdout.lineBuffered(line => {
+          post('stderr', { text: line });
+        });
+
+        const fds = [
+          new OpenFile(stdinFile),
+          flushStdout,
+          flushStderr,
+        ];
+
+        const wasi = new WASI(
+          ['program'],   // argv[0]
+          [],            // env
+          fds,
+          { debug: false }
+        );
+
+        let exitCode = 0;
+        try {
+          const wasmModule = await WebAssembly.compile(link.output.buffer
+            ? link.output.buffer
+            : link.output instanceof Uint8Array
+              ? link.output.buffer
+              : link.output
+          );
+          const instance = await WebAssembly.instantiate(wasmModule, {
+            wasi_snapshot_preview1: wasi.wasiImport,
+          });
+          exitCode = wasi.start(instance) ?? 0;
+        } catch(e) {
+          if (e && e.message && e.message.includes('exit')) {
+            // proc_exit — extract code if possible
+            const m = e.message.match(/(\d+)/);
+            exitCode = m ? parseInt(m[1]) : 0;
+          } else {
+            post('stderr', { text: 'Runtime error: ' + (e?.message || String(e)) });
+            exitCode = 1;
+          }
+        }
+
+        post('done', { exitCode });
+
+      } catch(e) {
+        post('error', { message: e.message || String(e), stack: e.stack });
+      }
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Local server (server.py) — dev-only fallback
+  // Returns true if server responded, false if not running.
   // ─────────────────────────────────────────────────────────────
   async function runCppServer(entry, isCpp) {
     const filesToSend = { ...State.files };
-    for (const id of State.settings.downloadedLibs) {
+    for (const id of (State.settings.downloadedLibs || [])) {
       const lib = LIBRARIES.find(l => l.id === id);
       if (lib) { const data = await Persist.loadLib(id); if (data) filesToSend[lib.path] = data; }
     }
@@ -467,25 +548,32 @@ const Compiler = (() => {
       const r = await fetch('/compile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ files: filesToSend, entry, std: State.settings.std, opt: State.settings.opt, flags: State.settings.flags }),
+        body: JSON.stringify({
+          files: filesToSend,
+          entry,
+          std:   State.settings.std,
+          opt:   State.settings.opt,
+          flags: State.settings.flags,
+        }),
         signal: AbortSignal.timeout(15000),
       });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       result = await r.json();
-    } catch (e) {
-      return false; // server not running
+    } catch(e) {
+      return false; // server not running — silent
     }
 
     Terminal.print('$ (server.py) ' + (isCpp ? 'clang++' : 'clang') + ' ' + entry, 'cmd');
+
     if (result.stderr) {
       result.stderr.split('\n').forEach(line => {
-        const isError = /\berror\b/i.test(line);
-        const isWarn  = /\bwarning\b/i.test(line);
-        if (isError)     Terminal.write('\x1b[38;5;203m' + line + '\x1b[0m\r\n');
-        else if (isWarn) Terminal.write('\x1b[38;5;220m' + line + '\x1b[0m\r\n');
-        else if (line)   Terminal.write('\x1b[38;5;244m' + line + '\x1b[0m\r\n');
+        if (!line) return;
+        if (/\berror\b/i.test(line))        Terminal.write('\x1b[38;5;203m' + line + '\x1b[0m\r\n');
+        else if (/\bwarning\b/i.test(line)) Terminal.write('\x1b[38;5;220m' + line + '\x1b[0m\r\n');
+        else                                Terminal.write('\x1b[38;5;244m' + line + '\x1b[0m\r\n');
       });
     }
+
     if (!result.success) {
       Terminal.print('✗ Compilation failed (exit ' + result.exit_code + ')', 'stderr');
       setExit(result.exit_code || 1); setStatus('ok', 'ready'); return true;
@@ -495,12 +583,13 @@ const Compiler = (() => {
     setStatus('spin', 'running…');
 
     const wasmBytes = Uint8Array.from(atob(result.wasm), c => c.charCodeAt(0));
+
     const interactive = State.settings.interactiveStdin;
     let exitCode;
     if (interactive && typeof SharedArrayBuffer !== 'undefined') {
       exitCode = await runWasmInteractive(wasmBytes);
     } else {
-      if (interactive) Terminal.print('⚠ Interactive stdin unavailable — using pre-collect mode.', 'warn');
+      if (interactive) Terminal.print('⚠ Interactive stdin unavailable — pre-collect mode.', 'warn');
       const stdin = await Terminal.promptStdin();
       exitCode = await runWasmInline(wasmBytes, stdin);
     }
@@ -509,14 +598,14 @@ const Compiler = (() => {
   }
 
   // ─────────────────────────────────────────────────────────────
-  // Interactive WASM via Web Worker + SharedArrayBuffer
+  // Interactive WASM runner (server.py output) via SharedArrayBuffer
   // ─────────────────────────────────────────────────────────────
   function runWasmInteractive(wasmBytes) {
     return new Promise(resolve => {
       const sharedBuf = new SharedArrayBuffer(1024 * 1024);
       const workerSrc = `(${workerFn.toString()})()`;
-      const blob = new Blob([workerSrc], { type: 'application/javascript' });
-      const worker = new Worker(URL.createObjectURL(blob));
+      const blob      = new Blob([workerSrc], { type: 'application/javascript' });
+      const worker    = new Worker(URL.createObjectURL(blob));
 
       worker.onmessage = ({ data }) => {
         if (data.type === 'write') {
@@ -544,9 +633,7 @@ const Compiler = (() => {
   }
 
   // ─────────────────────────────────────────────────────────────
-  // Inline WASM runner — complete WASI shim
-  // Handles: stdio, stdin, env, args, clock, random, exit, proc_raise,
-  //          path ops (stubbed), fd_seek, fd_tell, fd_advise, poll_oneoff
+  // Inline WASM runner — complete WASI shim (used by server.py path)
   // ─────────────────────────────────────────────────────────────
   async function runWasmInline(bytes, stdin = '') {
     let exitCode = 0, memory;
@@ -554,12 +641,10 @@ const Compiler = (() => {
     const stdinB = enc.encode(stdin + (stdin.endsWith('\n') ? '' : '\n'));
     let stdinPos = 0;
 
-    // Helper: read u32/u64 from wasm memory
-    const u32 = (ptr)      => new DataView(memory.buffer).getUint32(ptr, true);
-    const setU32 = (ptr, v)=> new DataView(memory.buffer).setUint32(ptr, v, true);
-    const setU64 = (ptr, v)=> new DataView(memory.buffer).setBigUint64(ptr, v, true);
+    const u32    = (ptr)       => new DataView(memory.buffer).getUint32(ptr, true);
+    const setU32 = (ptr, v)    => new DataView(memory.buffer).setUint32(ptr, v, true);
+    const setU64 = (ptr, v)    => new DataView(memory.buffer).setBigUint64(ptr, v, true);
 
-    // Gather iov scatter/gather buffers → string
     function iov_read(iovs, iovs_len) {
       let out = '', total = 0;
       for (let i = 0; i < iovs_len; i++) {
@@ -571,16 +656,13 @@ const Compiler = (() => {
     }
 
     const wasi = { wasi_snapshot_preview1: {
-      // ── fd_write ──
       fd_write(fd, iovs, iovs_len, nwritten) {
         const { out, total } = iov_read(iovs, iovs_len);
         setU32(nwritten, total);
-        if (fd === 1) Terminal.write('\x1b[0m' + out.replace(/\n/g, '\r\n') + '\x1b[0m');
+        if (fd === 1) Terminal.write('\x1b[0m' + out.replace(/\n/g, '\r\n'));
         else if (fd === 2) Terminal.write('\x1b[38;5;203m' + out.replace(/\n/g, '\r\n') + '\x1b[0m');
-        return 0; // ESUCCESS
+        return 0;
       },
-
-      // ── fd_read ──
       fd_read(fd, iovs, iovs_len, nread) {
         let total = 0;
         if (fd === 0) {
@@ -588,134 +670,43 @@ const Compiler = (() => {
           for (let i = 0; i < iovs_len; i++) {
             const base = u32(iovs + i * 8), len = u32(iovs + i * 8 + 4);
             const chunk = stdinB.slice(stdinPos, stdinPos + len);
-            mem8.set(chunk, base);
-            stdinPos += chunk.length;
-            total += chunk.length;
-            if (chunk.length < len) break; // EOF
+            mem8.set(chunk, base); stdinPos += chunk.length; total += chunk.length;
+            if (chunk.length < len) break;
           }
         }
-        setU32(nread, total);
-        return 0;
+        setU32(nread, total); return 0;
       },
-
-      // ── fd_close ──
       fd_close: () => 0,
-
-      // ── fd_seek (whence: 0=SET 1=CUR 2=END) ──
-      fd_seek(fd, offset_lo, offset_hi, whence, newoffset) {
-        // Stdin/stdout/stderr: not seekable → return ESPIPE (70)
-        if (fd < 3) { setU64(newoffset, 0n); return 70; }
-        setU64(newoffset, 0n); return 0;
-      },
-
-      // ── fd_tell ──
-      fd_tell(fd, offset) {
-        setU64(offset, 0n); return 0;
-      },
-
-      // ── fd_fdstat_get ──
+      fd_seek(fd, ol, oh, w, np) { setU64(np, 0n); return fd < 3 ? 70 : 0; },
+      fd_tell(fd, off) { setU64(off, 0n); return 0; },
       fd_fdstat_get(fd, stat) {
-        // filetype: 0=unknown,1=block_device,2=char_device,3=dir,4=regular,5=socket_dgram,6=socket_stream,7=symlink
         const v = new DataView(memory.buffer);
-        v.setUint8(stat, fd < 3 ? 2 : 4);  // char device for stdio, regular otherwise
-        v.setUint16(stat + 2, 0, true);     // fs_flags
-        v.setBigUint64(stat + 8, 0n, true); // fs_rights_base
-        v.setBigUint64(stat + 16, 0n, true);// fs_rights_inheriting
+        v.setUint8(stat, fd < 3 ? 2 : 4);
+        v.setUint16(stat + 2, 0, true);
+        v.setBigUint64(stat + 8, 0n, true);
+        v.setBigUint64(stat + 16, 0n, true);
         return 0;
       },
-
-      // ── fd_fdstat_set_flags ──
       fd_fdstat_set_flags: () => 0,
-
-      // ── fd_filestat_get ──
-      fd_filestat_get(fd, buf) {
-        // fill with zeros — size/times unknown
-        new Uint8Array(memory.buffer, buf, 64).fill(0);
-        return 0;
-      },
-
-      // ── fd_advise ──
-      fd_advise: () => 0,
-
-      // ── fd_allocate ──
-      fd_allocate: () => 0,
-
-      // ── fd_datasync / fd_sync ──
-      fd_datasync: () => 0,
-      fd_sync:     () => 0,
-
-      // ── fd_prestat_get — we expose no preopened dirs ──
-      fd_prestat_get: () => 8, // EBADF
-
-      // ── fd_prestat_dir_name ──
-      fd_prestat_dir_name: () => 28, // EINVAL
-
-      // ── path_open — stub (no real FS) ──
-      path_open: () => 8,
-
-      // ── path_* stubs ──
-      path_create_directory: () => 8,
-      path_remove_directory: () => 8,
-      path_unlink_file:      () => 8,
-      path_rename:           () => 8,
-      path_link:             () => 8,
-      path_symlink:          () => 8,
-      path_readlink:         () => 8,
-      path_filestat_get:     () => 8,
+      fd_filestat_get(fd, buf) { new Uint8Array(memory.buffer, buf, 64).fill(0); return 0; },
+      fd_advise: () => 0, fd_allocate: () => 0, fd_datasync: () => 0, fd_sync: () => 0,
+      fd_prestat_get: () => 8, fd_prestat_dir_name: () => 28, path_open: () => 8,
+      path_create_directory: () => 8, path_remove_directory: () => 8,
+      path_unlink_file: () => 8, path_rename: () => 8, path_link: () => 8,
+      path_symlink: () => 8, path_readlink: () => 8, path_filestat_get: () => 8,
       path_filestat_set_times: () => 8,
-
-      // ── environ_get / environ_sizes_get ──
-      environ_get: (environ, environ_buf) => {
-        setU32(environ, 0); return 0;
-      },
-      environ_sizes_get: (count, buf_size) => {
-        setU32(count, 0); setU32(buf_size, 0); return 0;
-      },
-
-      // ── args_get / args_sizes_get ──
+      environ_get: () => 0,
+      environ_sizes_get: (c, b) => { setU32(c, 0); setU32(b, 0); return 0; },
       args_get: () => 0,
-      args_sizes_get: (argc, argv_buf_size) => {
-        setU32(argc, 0); setU32(argv_buf_size, 0); return 0;
-      },
-
-      // ── proc_exit ──
+      args_sizes_get: (c, b) => { setU32(c, 0); setU32(b, 0); return 0; },
       proc_exit: (code) => { exitCode = code; throw { __exit: true, code }; },
-
-      // ── proc_raise ──
       proc_raise: (sig) => { exitCode = 128 + sig; throw { __exit: true, code: exitCode }; },
-
-      // ── clock_time_get ──
-      clock_time_get: (id, precision, time_ptr) => {
-        // id 0=realtime, 1=monotonic — both return wall-clock nanoseconds
-        setU64(time_ptr, BigInt(Date.now()) * 1_000_000n);
-        return 0;
-      },
-
-      // ── clock_res_get ──
-      clock_res_get: (id, res_ptr) => {
-        setU64(res_ptr, 1_000_000n); // 1ms resolution
-        return 0;
-      },
-
-      // ── sched_yield ──
+      clock_time_get: (id, prec, ptr) => { setU64(ptr, BigInt(Date.now()) * 1_000_000n); return 0; },
+      clock_res_get: (id, ptr) => { setU64(ptr, 1_000_000n); return 0; },
       sched_yield: () => 0,
-
-      // ── random_get ──
-      random_get: (buf, buf_len) => {
-        crypto.getRandomValues(new Uint8Array(memory.buffer, buf, buf_len));
-        return 0;
-      },
-
-      // ── poll_oneoff — stub (used by some C++ runtimes for sleep) ──
-      poll_oneoff: (in_ptr, out_ptr, nsubscriptions, nevents_ptr) => {
-        setU32(nevents_ptr, 0); return 0;
-      },
-
-      // ── sock stubs ──
-      sock_accept:  () => 28,
-      sock_recv:    () => 28,
-      sock_send:    () => 28,
-      sock_shutdown:() => 28,
+      random_get: (buf, len) => { crypto.getRandomValues(new Uint8Array(memory.buffer, buf, len)); return 0; },
+      poll_oneoff: (i, o, n, ne) => { setU32(ne, 0); return 0; },
+      sock_accept: () => 28, sock_recv: () => 28, sock_send: () => 28, sock_shutdown: () => 28,
     }};
 
     try {
@@ -734,7 +725,7 @@ const Compiler = (() => {
   }
 
   // ─────────────────────────────────────────────────────────────
-  // Worker source (inlined) — full WASI shim for interactive mode
+  // Worker source for interactive mode (server.py path only)
   // ─────────────────────────────────────────────────────────────
   function workerFn() {
     self.onmessage = async ({ data }) => {
@@ -744,14 +735,14 @@ const Compiler = (() => {
       const dec = new TextDecoder();
       let exitCode = 0, memory;
 
-      const u32    = (ptr)       => new DataView(memory.buffer).getUint32(ptr, true);
-      const setU32 = (ptr, v)    => new DataView(memory.buffer).setUint32(ptr, v, true);
-      const setU64 = (ptr, v)    => new DataView(memory.buffer).setBigUint64(ptr, v, true);
+      const u32    = (p)    => new DataView(memory.buffer).getUint32(p, true);
+      const setU32 = (p, v) => new DataView(memory.buffer).setUint32(p, v, true);
+      const setU64 = (p, v) => new DataView(memory.buffer).setBigUint64(p, v, true);
 
-      function iov_read(iovs, iovs_len) {
+      function iov_read(iovs, n) {
         let out = '', total = 0;
-        for (let i = 0; i < iovs_len; i++) {
-          const base = u32(iovs + i * 8), len = u32(iovs + i * 8 + 4);
+        for (let i = 0; i < n; i++) {
+          const base = u32(iovs + i*8), len = u32(iovs + i*8 + 4);
           out += dec.decode(new Uint8Array(memory.buffer, base, len));
           total += len;
         }
@@ -759,29 +750,28 @@ const Compiler = (() => {
       }
 
       const wasi = { wasi_snapshot_preview1: {
-        fd_write(fd, iovs, iovs_len, nwritten) {
-          const { out, total } = iov_read(iovs, iovs_len);
-          setU32(nwritten, total);
+        fd_write(fd, iovs, n, nw) {
+          const { out, total } = iov_read(iovs, n);
+          setU32(nw, total);
           self.postMessage({ type: 'write', fd, text: out });
           return 0;
         },
-        fd_read(fd, iovs, iovs_len, nread) {
-          if (fd !== 0) { setU32(nread, 0); return 0; }
+        fd_read(fd, iovs, n, nr) {
+          if (fd !== 0) { setU32(nr, 0); return 0; }
           Atomics.store(ctrl, 0, 1);
           self.postMessage({ type: 'waiting-stdin' });
           Atomics.wait(ctrl, 0, 1);
           const len = Atomics.load(ctrl, 1);
-          const lineBytes = dataBuf.slice(0, len);
+          const chunk = dataBuf.slice(0, len);
           Atomics.store(ctrl, 0, 0);
           const mem8 = new Uint8Array(memory.buffer);
           let written = 0;
-          for (let i = 0; i < iovs_len && written < lineBytes.length; i++) {
-            const base = u32(iovs + i * 8), cap = u32(iovs + i * 8 + 4);
-            const chunk = lineBytes.slice(written, written + cap);
-            mem8.set(chunk, base);
-            written += chunk.length;
+          for (let i = 0; i < n && written < chunk.length; i++) {
+            const base = u32(iovs + i*8), cap = u32(iovs + i*8 + 4);
+            const sl = chunk.slice(written, written + cap);
+            mem8.set(sl, base); written += sl.length;
           }
-          setU32(nread, written); return 0;
+          setU32(nr, written); return 0;
         },
         fd_close: () => 0,
         fd_seek(fd, ol, oh, w, np) { setU64(np, 0n); return fd < 3 ? 70 : 0; },
@@ -796,30 +786,20 @@ const Compiler = (() => {
         },
         fd_fdstat_set_flags: () => 0,
         fd_filestat_get(fd, buf) { new Uint8Array(memory.buffer, buf, 64).fill(0); return 0; },
-        fd_advise: () => 0,
-        fd_allocate: () => 0,
-        fd_datasync: () => 0,
-        fd_sync:     () => 0,
-        fd_prestat_get:      () => 8,
-        fd_prestat_dir_name: () => 28,
-        path_open:           () => 8,
-        path_create_directory: () => 8,
-        path_remove_directory: () => 8,
-        path_unlink_file:    () => 8,
-        path_rename:         () => 8,
-        path_link:           () => 8,
-        path_symlink:        () => 8,
-        path_readlink:       () => 8,
-        path_filestat_get:   () => 8,
+        fd_advise: () => 0, fd_allocate: () => 0, fd_datasync: () => 0, fd_sync: () => 0,
+        fd_prestat_get: () => 8, fd_prestat_dir_name: () => 28, path_open: () => 8,
+        path_create_directory: () => 8, path_remove_directory: () => 8,
+        path_unlink_file: () => 8, path_rename: () => 8, path_link: () => 8,
+        path_symlink: () => 8, path_readlink: () => 8, path_filestat_get: () => 8,
         path_filestat_set_times: () => 8,
         environ_get: () => 0,
         environ_sizes_get: (c, b) => { setU32(c, 0); setU32(b, 0); return 0; },
         args_get: () => 0,
         args_sizes_get: (c, b) => { setU32(c, 0); setU32(b, 0); return 0; },
         proc_exit: (code) => { exitCode = code; throw { __exit: true, code }; },
-        proc_raise: (sig) => { exitCode = 128 + sig; throw { __exit: true, code: exitCode }; },
-        clock_time_get: (id, prec, ptr) => { setU64(ptr, BigInt(Date.now()) * 1_000_000n); return 0; },
-        clock_res_get: (id, ptr)        => { setU64(ptr, 1_000_000n); return 0; },
+        proc_raise: (sig) => { exitCode = 128+sig; throw { __exit: true, code: exitCode }; },
+        clock_time_get: (id, p, ptr) => { setU64(ptr, BigInt(Date.now()) * 1_000_000n); return 0; },
+        clock_res_get: (id, ptr) => { setU64(ptr, 1_000_000n); return 0; },
         sched_yield: () => 0,
         random_get: (buf, len) => { crypto.getRandomValues(new Uint8Array(memory.buffer, buf, len)); return 0; },
         poll_oneoff: (i, o, n, ne) => { setU32(ne, 0); return 0; },
@@ -833,10 +813,8 @@ const Compiler = (() => {
         if (instance.exports.__wasm_call_ctors) instance.exports.__wasm_call_ctors();
         instance.exports._start();
       } catch(e) {
-        if (!e?.__exit) {
+        if (!e?.__exit)
           self.postMessage({ type: 'write', fd: 2, text: 'Runtime trap: ' + (e?.message || String(e)) + '\n' });
-          exitCode = 1;
-        }
       }
       self.postMessage({ type: 'done', exitCode });
     };
@@ -854,10 +832,10 @@ const Compiler = (() => {
     Terminal.print('$ node ' + State.activeFile, 'cmd');
     Terminal.print('─────────────────────────────', 'info');
     const fakeConsole = {
-      log:  (...a) => Terminal.write('\x1b[0m'          + a.map(String).join(' ') + '\r\n'),
-      error:(...a) => Terminal.write('\x1b[38;5;203m'   + a.map(String).join(' ') + '\x1b[0m\r\n'),
-      warn: (...a) => Terminal.write('\x1b[38;5;220m'   + a.map(String).join(' ') + '\x1b[0m\r\n'),
-      info: (...a) => Terminal.write('\x1b[38;5;69m'    + a.map(String).join(' ') + '\x1b[0m\r\n'),
+      log:  (...a) => Terminal.write('\x1b[0m'        + a.map(String).join(' ') + '\r\n'),
+      error:(...a) => Terminal.write('\x1b[38;5;203m' + a.map(String).join(' ') + '\x1b[0m\r\n'),
+      warn: (...a) => Terminal.write('\x1b[38;5;220m' + a.map(String).join(' ') + '\x1b[0m\r\n'),
+      info: (...a) => Terminal.write('\x1b[38;5;69m'  + a.map(String).join(' ') + '\x1b[0m\r\n'),
     };
     try { new Function('console', State.files[State.activeFile])(fakeConsole); setExit(0); }
     catch(e) { Terminal.write('\x1b[38;5;203m' + e.toString() + '\x1b[0m\r\n'); setExit(1); }
@@ -904,7 +882,7 @@ const Compiler = (() => {
     setStatus('spin', 'running…');
     const py = window._pyodide;
 
-    py.runPython(`import sys, io, builtins
+    py.runPython(`import sys, io
 sys.stdout = io.StringIO()
 sys.stderr = io.StringIO()`);
 

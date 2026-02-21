@@ -269,5 +269,14 @@
 <script src="js/settings.js" defer></script>
 <script src="js/git.js" defer></script>
 <script src="js/main.js" defer></script>
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js')
+        .then(r => console.log('[SW] registered, scope:', r.scope))
+        .catch(e => console.warn('[SW] registration failed:', e));
+    });
+  }
+</script>
 </body>
 </html>

@@ -109,4 +109,5 @@ const PYTHON_PACKAGES = [
 
 const RUNTIMES = [
   { id:'python', name:'Python (Pyodide)', desc:'CPython 3.12 in WASM — enables .py files', size:'~11MB', url:'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js' },
+  { id:'cpp-wasmer', name:'C++ Compiler (Wasmer)', desc:'Offline clang in WASM — compile C/C++ without internet', size:'~100MB', url:null },
 ];

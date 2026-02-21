@@ -217,6 +217,64 @@ const Settings = (() => {
   }
 
   async function loadRuntime(id, row) {
+    if (id === 'cpp-wasmer') {
+      // Trigger the Wasmer + clang load via the compiler module
+      const btn = row.querySelector('.lib-btn');
+      btn.textContent = '⟳ loading…'; btn.className = 'lib-btn loading'; btn.disabled = true;
+      Terminal.print('⟳ Loading Wasmer SDK and clang (~100 MB)…', 'info');
+      Terminal.print('  This will take a while. The file is cached after first download.', 'info');
+      showPanel('terminal');
+      try {
+        // ensureWasmer and ensureClang are internal to Compiler — trigger via a dummy compile
+        // that will load them and fail gracefully with no source
+        const wasmerOk = await (async () => {
+          // Access internal Compiler state by loading directly
+          const mod = await import('/vendor/wasmer/WasmerSDKBundled.js');
+          await mod.init();
+          window._WasmerSDK = mod;
+          window._wasmerRuntimeLoaded = true;
+          Terminal.print('✓ Wasmer SDK loaded.', 'success');
+          return true;
+        })();
+        if (!wasmerOk) throw new Error('SDK load failed');
+
+        // Now load clang.webc
+        const { Wasmer } = window._WasmerSDK;
+        const resp = await fetch('/clang-webc');
+        if (!resp.ok) throw new Error('clang.webc fetch failed: HTTP ' + resp.status);
+
+        Terminal.print('  Downloading clang.webc (~100 MB)…', 'info');
+        const frames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
+        let fi = 0, elapsed = 0;
+        const timer = setInterval(() => {
+          elapsed++;
+          const m = String(Math.floor(elapsed/60)), s = String(elapsed%60).padStart(2,'0');
+          Terminal.write(`\r\x1b[38;5;69m  ${frames[fi++%frames.length]} downloading… ${m}:${s}\x1b[0m`);
+        }, 1000);
+        let clang;
+        try {
+          const blob = await resp.blob();
+          const file = new File([blob], 'clang.webc');
+          Terminal.write('\r\x1b[2K');
+          Terminal.print('  Parsing clang.webc…', 'info');
+          clang = await Wasmer.fromFile(file);
+        } finally { clearInterval(timer); Terminal.write('\r\x1b[2K'); }
+
+        // Inject into Compiler’s closure via window
+        window._clangRuntime = clang;
+        // Patch: compiler checks window._clangRuntime on ensureClang
+        btn.textContent = '✓ loaded'; btn.className = 'lib-btn done'; btn.disabled = false;
+        Terminal.print('✓ C++ compiler ready for offline use!', 'success');
+        if (!State.settings.downloadedRuntimes.includes(id)) {
+          State.settings.downloadedRuntimes.push(id);
+          Persist.saveSettings();
+        }
+      } catch(e) {
+        btn.textContent = '✗ failed'; btn.className = 'lib-btn'; btn.disabled = false;
+        Terminal.print('✗ Failed to load C++ runtime: ' + e.message, 'stderr');
+      }
+      return;
+    }
     if (id !== 'python') { Terminal.print('Runtime not yet supported.', 'warn'); return; }
     const btn = row.querySelector('.lib-btn');
     btn.textContent = '⟳ loading…'; btn.className = 'lib-btn loading';

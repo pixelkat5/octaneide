@@ -8,6 +8,9 @@ vendor/wasmer/clang.webc
 # Large binary — install via npm/download_deps.py
 wasmer-sdk-0.10.0.tgz
 
+# Other
+info_check.txt
+
 # OS junk
 .DS_Store
 Thumbs.db

@@ -97,7 +97,7 @@
         <div id="output-tabs">
           <button class="o-tab active" data-panel="terminal">terminal</button>
           <button class="o-tab" data-panel="preview">preview</button>
-          <button class="o-tab" data-panel="git">git</button>
+          <button class="o-tab" data-panel="git">project</button>
         </div>
         <div class="spacer"></div>
         <span id="exit-badge"></span>
@@ -107,39 +107,28 @@
       <div id="panel-git" class="hidden">
         <div id="git-panel">
           <div id="git-header">
-            <span id="git-branch-wrap"><i class="fa-solid fa-code-branch"></i> <span id="git-branch-name">…</span></span>
-            <button class="git-icon-btn" id="git-btn-refresh" title="Refresh status"><i class="fa-solid fa-rotate"></i></button>
+            <span id="git-branch-wrap"><i class="fa-solid fa-folder-open"></i> project</span>
           </div>
 
           <div id="git-status-section">
-            <div class="git-section-title">Changes <button class="git-small-btn" id="git-btn-stage-all" title="Stage all">stage all</button></div>
-            <div id="git-status-list"><div class="git-dim" style="padding:6px 0">loading…</div></div>
+            <div class="git-section-title">Export</div>
+            <div id="git-commit-btns">
+              <button class="git-action-btn" id="git-btn-export-zip"><i class="fa-solid fa-file-zipper"></i> Export .zip</button>
+              <button class="git-action-btn" id="git-btn-export-file"><i class="fa-solid fa-file-arrow-down"></i> Download file</button>
+            </div>
           </div>
 
           <div id="git-commit-section">
-            <div class="git-section-title">Commit</div>
-            <input id="git-commit-msg" type="text" placeholder="Commit message…" spellcheck="false" autocomplete="off"/>
+            <div class="git-section-title">Import</div>
             <div id="git-commit-btns">
-              <button class="git-action-btn" id="git-btn-commit"><i class="fa-solid fa-check"></i> Commit</button>
-              <button class="git-action-btn" id="git-btn-push"><i class="fa-solid fa-arrow-up"></i> Push</button>
-              <button class="git-action-btn" id="git-btn-pull"><i class="fa-solid fa-arrow-down"></i> Pull</button>
+              <button class="git-action-btn" id="git-btn-import"><i class="fa-solid fa-file-arrow-up"></i> Import files…</button>
             </div>
           </div>
 
           <div id="git-quick-section">
-            <div class="git-section-title">Quick actions</div>
+            <div class="git-section-title">Reset</div>
             <div id="git-quick-btns">
-              <button class="git-small-btn" id="git-btn-log">log</button>
-              <button class="git-small-btn" id="git-btn-diff">diff</button>
-            </div>
-          </div>
-
-          <div id="git-cmd-section">
-            <div class="git-section-title">Run command</div>
-            <div id="git-cmd-row">
-              <span class="git-cmd-prefix">git</span>
-              <input id="git-cmd-input" type="text" placeholder="status -s" spellcheck="false" autocomplete="off"/>
-              <button class="git-icon-btn" id="git-btn-run-cmd"><i class="fa-solid fa-play"></i></button>
+              <button class="git-small-btn" id="git-btn-clear">reset project</button>
             </div>
           </div>
 
@@ -192,15 +181,6 @@
           <div class="sr" data-label="dev errors console debug verbose"><label>Dev errors</label><input type="checkbox" id="s-deverrors"/><span class="sr-hint">log full errors to browser console</span></div>
         </div>
         <div class="sg" data-cat="cpp"><div class="sg-title">C / C++ Compiler</div>
-          <div class="sr" data-label="compiler backend browsercc wasmer server local">
-            <label>Compiler backend</label>
-            <select id="s-cpp-backend">
-              <option value="browsercc" selected>Auto (server → Wasmer → Godbolt)</option>
-              <option value="wasmer">Wasmer / clang.webc (in-browser)</option>
-              <option value="server">Local server only (server.py)</option>
-            </select>
-            <span class="sr-hint">local server always takes priority when running</span>
-          </div>
           <div class="sr" data-label="c++ standard version c11 c99 c++17 c++20 c++23"><label>Standard</label><select id="s-std"><option value="-std=c++23">C++23</option><option value="-std=c++20">C++20</option><option value="-std=c++17" selected>C++17</option><option value="-std=c++14">C++14</option><option value="-std=c++11">C++11</option><option value="-std=c11">C11</option><option value="-std=c99">C99</option></select></div>
           <div class="sr" data-label="optimization o0 o1 o2 o3 speed"><label>Optimization</label><select id="s-opt"><option value="-O0">-O0 none</option><option value="-O1" selected>-O1 basic</option><option value="-O2">-O2 moderate</option><option value="-O3">-O3 aggressive</option><option value="-Os">-Os size</option></select></div>
           <div class="sr" data-label="extra flags wall wextra compiler flags"><label>Extra flags</label><input type="text" id="s-flags" placeholder="-Wall -Wextra"/></div>

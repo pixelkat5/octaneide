@@ -13,7 +13,6 @@ const Settings = (() => {
     document.querySelectorAll('#settings-body .sg[data-cat]').forEach(el => {
       el.style.display = el.dataset.cat === cat ? '' : 'none';
     });
-    // clear search when switching category manually
     const s = document.getElementById('settings-search');
     if (s) s.value = '';
     _applySearch('');
@@ -22,38 +21,31 @@ const Settings = (() => {
   function _applySearch(q) {
     q = q.toLowerCase().trim();
     if (!q) {
-      // restore normal category view
       document.querySelectorAll('#settings-body .sg[data-cat]').forEach(el => {
         el.style.display = el.dataset.cat === _activeCategory ? '' : 'none';
       });
       document.querySelectorAll('.snav-item').forEach(el => el.classList.remove('hidden-cat'));
       return;
     }
-    // Search mode: show all matching rows across all categories
     const catsWithMatches = new Set();
     document.querySelectorAll('#settings-body .sg[data-cat]').forEach(sg => {
       let sgHasMatch = false;
       sg.querySelectorAll('.sr[data-label]').forEach(sr => {
-        const lbl = sr.dataset.label || '';
-        const text = sr.innerText || '';
-        const match = lbl.includes(q) || text.toLowerCase().includes(q);
+        const match = (sr.dataset.label || '').includes(q) || (sr.innerText || '').toLowerCase().includes(q);
         sr.style.display = match ? '' : 'none';
         if (match) { sgHasMatch = true; catsWithMatches.add(sg.dataset.cat); }
       });
       sg.style.display = sgHasMatch ? '' : 'none';
     });
-    // Update nav: dim categories with no matches
     document.querySelectorAll('.snav-item').forEach(el => {
       el.classList.toggle('hidden-cat', !catsWithMatches.has(el.dataset.cat));
     });
   }
 
   function init() {
-    // apply saved values
     document.getElementById('s-fontsize').value = State.settings.fontSize;
     document.getElementById('s-fontsize-val').textContent = State.settings.fontSize + 'px';
     document.getElementById('s-theme').value = State.settings.theme;
-    document.getElementById('s-cpp-backend').value = State.settings.cppBackend || 'browsercc';
     document.getElementById('s-std').value = State.settings.std;
     document.getElementById('s-opt').value = State.settings.opt;
     document.getElementById('s-flags').value = State.settings.flags;
@@ -69,30 +61,24 @@ const Settings = (() => {
       document.getElementById('s-fontsize-val').textContent = e.target.value + 'px';
       Editor.applySettings(); Persist.saveSettings();
     };
-    document.getElementById('s-theme').onchange      = e => { State.settings.theme      = e.target.value; Editor.applySettings(); Persist.saveSettings(); };
-    document.getElementById('s-cpp-backend').onchange = e => { State.settings.cppBackend = e.target.value; Persist.saveSettings(); };
-    document.getElementById('s-std').onchange    = e => { State.settings.std   = e.target.value; Persist.saveSettings(); };
-    document.getElementById('s-opt').onchange    = e => { State.settings.opt   = e.target.value; Persist.saveSettings(); };
-    document.getElementById('s-flags').oninput   = e => { State.settings.flags = e.target.value; Persist.saveSettings(); };
-    document.getElementById('s-livereload').onchange = e => { State.settings.liveReload = e.target.checked; Persist.saveSettings(); };
+    document.getElementById('s-theme').onchange           = e => { State.settings.theme         = e.target.value;   Editor.applySettings(); Persist.saveSettings(); };
+    document.getElementById('s-std').onchange             = e => { State.settings.std            = e.target.value;   Persist.saveSettings(); };
+    document.getElementById('s-opt').onchange             = e => { State.settings.opt            = e.target.value;   Persist.saveSettings(); };
+    document.getElementById('s-flags').oninput            = e => { State.settings.flags          = e.target.value;   Persist.saveSettings(); };
+    document.getElementById('s-livereload').onchange      = e => { State.settings.liveReload     = e.target.checked; Persist.saveSettings(); };
     document.getElementById('s-delay').oninput = e => {
       State.settings.reloadDelay = parseInt(e.target.value);
       document.getElementById('s-delay-val').textContent = e.target.value + 'ms';
       Persist.saveSettings();
     };
     document.getElementById('s-interactive-stdin').onchange = e => { State.settings.interactiveStdin = e.target.checked; Persist.saveSettings(); };
-    document.getElementById('s-wordwrap').onchange = e => { State.settings.wordWrap = e.target.checked; Editor.applySettings(); Persist.saveSettings(); };
-    document.getElementById('s-deverrors').onchange = e => { State.settings.showDevErrors = e.target.checked; Persist.saveSettings(); };
+    document.getElementById('s-wordwrap').onchange           = e => { State.settings.wordWrap         = e.target.checked; Editor.applySettings(); Persist.saveSettings(); };
+    document.getElementById('s-deverrors').onchange          = e => { State.settings.showDevErrors     = e.target.checked; Persist.saveSettings(); };
 
-    // Sidebar nav
     document.querySelectorAll('.snav-item').forEach(el => {
       el.addEventListener('click', () => _activateCategory(el.dataset.cat));
     });
-
-    // Search
     document.getElementById('settings-search').addEventListener('input', e => _applySearch(e.target.value));
-
-    // Init to first category
     _activateCategory('editor');
 
     document.getElementById('btn-settings').onclick = open;
@@ -120,7 +106,6 @@ const Settings = (() => {
     if (!el) return;
     el.innerHTML = '';
 
-    // Custom package install row
     const custom = document.createElement('div');
     custom.className = 'lib-row py-custom-row';
     custom.innerHTML = `
@@ -162,10 +147,7 @@ const Settings = (() => {
   }
 
   async function installPyPackage(pkg, row) {
-    if (!window._pyodide) {
-      Terminal.print('⚠  Load the Python runtime first (Runtimes section below).', 'warn');
-      return;
-    }
+    if (!window._pyodide) { Terminal.print('⚠  Load the Python runtime first (Runtimes section below).', 'warn'); return; }
     const btn = row.querySelector('.lib-btn');
     btn.textContent = '⟳ installing…'; btn.className = 'lib-btn loading';
     try {
@@ -174,10 +156,7 @@ const Settings = (() => {
       btn.textContent = '✓ installed'; btn.className = 'lib-btn done';
       Terminal.print(`✓ ${pkg.name} installed.`, 'success');
       if (!State.settings.installedPyPackages) State.settings.installedPyPackages = [];
-      if (!State.settings.installedPyPackages.includes(pkg.id)) {
-        State.settings.installedPyPackages.push(pkg.id);
-        Persist.saveSettings();
-      }
+      if (!State.settings.installedPyPackages.includes(pkg.id)) { State.settings.installedPyPackages.push(pkg.id); Persist.saveSettings(); }
     } catch(e) {
       btn.textContent = '✗ failed'; btn.className = 'lib-btn';
       Terminal.print(`✗ Failed to install ${pkg.name}: ${e.message}`, 'stderr');
@@ -205,97 +184,38 @@ const Settings = (() => {
     const el = document.getElementById('runtime-list');
     el.innerHTML = '';
     for (const rt of RUNTIMES) {
-      const done = rt.id === 'python' ? !!window._pyodide : State.settings.downloadedRuntimes.includes(rt.id);
+      const done = rt.id === 'python' ? !!window._pyodide : false;
       const row  = document.createElement('div'); row.className = 'lib-row';
       row.innerHTML = `
         <div class="lib-info"><div class="lib-name">${rt.name}</div><div class="lib-desc">${rt.desc}</div></div>
         <span class="lib-size">${rt.size}</span>
-        <button class="lib-btn ${done?'done':''}" data-id="${rt.id}">${done ? '✓ loaded' : '↓ download'}</button>`;
+        <button class="lib-btn ${done?'done':''}" data-id="${rt.id}">${done ? '✓ loaded' : '↓ load'}</button>`;
       row.querySelector('.lib-btn').onclick = () => loadRuntime(rt.id, row);
       el.appendChild(row);
     }
   }
 
   async function loadRuntime(id, row) {
-    if (id === 'cpp-wasmer') {
-      // Trigger the Wasmer + clang load via the compiler module
-      const btn = row.querySelector('.lib-btn');
-      btn.textContent = '⟳ loading…'; btn.className = 'lib-btn loading'; btn.disabled = true;
-      Terminal.print('⟳ Loading Wasmer SDK and clang (~100 MB)…', 'info');
-      Terminal.print('  This will take a while. The file is cached after first download.', 'info');
-      showPanel('terminal');
-      try {
-        // ensureWasmer and ensureClang are internal to Compiler — trigger via a dummy compile
-        // that will load them and fail gracefully with no source
-        const wasmerOk = await (async () => {
-          // Access internal Compiler state by loading directly
-          const mod = await import('/vendor/wasmer/WasmerSDKBundled.js');
-          await mod.init();
-          window._WasmerSDK = mod;
-          window._wasmerRuntimeLoaded = true;
-          Terminal.print('✓ Wasmer SDK loaded.', 'success');
-          return true;
-        })();
-        if (!wasmerOk) throw new Error('SDK load failed');
-
-        // Now load clang.webc
-        const { Wasmer } = window._WasmerSDK;
-        const resp = await fetch('/clang-webc');
-        if (!resp.ok) throw new Error('clang.webc fetch failed: HTTP ' + resp.status);
-
-        Terminal.print('  Downloading clang.webc (~100 MB)…', 'info');
-        const frames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
-        let fi = 0, elapsed = 0;
-        const timer = setInterval(() => {
-          elapsed++;
-          const m = String(Math.floor(elapsed/60)), s = String(elapsed%60).padStart(2,'0');
-          Terminal.write(`\r\x1b[38;5;69m  ${frames[fi++%frames.length]} downloading… ${m}:${s}\x1b[0m`);
-        }, 1000);
-        let clang;
-        try {
-          const blob = await resp.blob();
-          const file = new File([blob], 'clang.webc');
-          Terminal.write('\r\x1b[2K');
-          Terminal.print('  Parsing clang.webc…', 'info');
-          clang = await Wasmer.fromFile(file);
-        } finally { clearInterval(timer); Terminal.write('\r\x1b[2K'); }
-
-        // Inject into Compiler’s closure via window
-        window._clangRuntime = clang;
-        // Patch: compiler checks window._clangRuntime on ensureClang
-        btn.textContent = '✓ loaded'; btn.className = 'lib-btn done'; btn.disabled = false;
-        Terminal.print('✓ C++ compiler ready for offline use!', 'success');
-        if (!State.settings.downloadedRuntimes.includes(id)) {
-          State.settings.downloadedRuntimes.push(id);
-          Persist.saveSettings();
-        }
-      } catch(e) {
-        btn.textContent = '✗ failed'; btn.className = 'lib-btn'; btn.disabled = false;
-        Terminal.print('✗ Failed to load C++ runtime: ' + e.message, 'stderr');
-      }
-      return;
-    }
     if (id !== 'python') { Terminal.print('Runtime not yet supported.', 'warn'); return; }
     const btn = row.querySelector('.lib-btn');
     btn.textContent = '⟳ loading…'; btn.className = 'lib-btn loading';
     try {
       if (!window.loadPyodide) {
-        await new Promise((res,rej) => {
+        await new Promise((res, rej) => {
           const s = document.createElement('script');
           s.src = 'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js';
           s.onload = res; s.onerror = rej; document.head.appendChild(s);
         });
       }
       window._pyodide = await window.loadPyodide({
-        stdout: s => Terminal.write(s+'\r\n'),
-        stderr: s => Terminal.write('\x1b[38;5;203m'+s+'\x1b[0m\r\n'),
+        stdout: s => Terminal.write(s + '\r\n'),
+        stderr: s => Terminal.write('\x1b[38;5;203m' + s + '\x1b[0m\r\n'),
       });
       btn.textContent = '✓ loaded'; btn.className = 'lib-btn done';
       Terminal.print('✓ Python (Pyodide) ready.', 'success');
-      if (!State.settings.downloadedRuntimes.includes(id)) { State.settings.downloadedRuntimes.push(id); Persist.saveSettings(); }
     } catch(e) {
       btn.textContent = '✗ failed'; btn.className = 'lib-btn';
-      Terminal.print('✗ Pyodide failed: '+e.message, 'stderr');
+      Terminal.print('✗ Pyodide failed: ' + e.message, 'stderr');
     }
   }
 

@@ -19,12 +19,10 @@ const State = {
     flags:       '-Wall',
     liveReload:  true,
     reloadDelay: 600,
-    cppBackend:       'browsercc',
     interactiveStdin: true,
     wordWrap:         false,
-    downloadedLibs:     [],
-    downloadedRuntimes: [],
-    showDevErrors: false,
+    downloadedLibs:  [],
+    showDevErrors:   false,
   },
 };
 
@@ -108,6 +106,5 @@ const PYTHON_PACKAGES = [
 ];
 
 const RUNTIMES = [
-  { id:'python', name:'Python (Pyodide)', desc:'CPython 3.12 in WASM — enables .py files', size:'~11MB', url:'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js' },
-  { id:'cpp-wasmer', name:'C++ Compiler (Wasmer)', desc:'Offline clang in WASM — compile C/C++ without internet', size:'~100MB', url:null },
+  { id:'python', name:'Python (Pyodide)', desc:'CPython 3.12 in WASM — run .py files in-browser', size:'~11MB', url:'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js' },
 ];

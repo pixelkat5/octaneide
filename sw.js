@@ -6,7 +6,7 @@
 //   - WASI shim (esm.sh) → Cache First after first fetch
 //   - Everything else → Cache First with network fallback
 
-const CACHE_VERSION = 'octaneide-v2';
+const CACHE_VERSION = 'octaneide-v3';
 const CACHE_STATIC  = CACHE_VERSION + '-static';
 const CACHE_LARGE   = CACHE_VERSION + '-large';  // clang.wasm / lld.wasm / sysroot.tar
 

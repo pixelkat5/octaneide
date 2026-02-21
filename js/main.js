@@ -86,11 +86,11 @@ document.addEventListener('keydown', e => {
 // ── Service Worker ────────────────────────────────────────────
 if ('serviceWorker' in navigator) {
   const sw = `
-const C='polyide2-v9';
+const C='octaneide-v3';
 const PRECACHE=['./','./index.html','./manifest.json','./css/main.css','./vendor/fonts/fonts.css','./vendor/fonts/jetbrains-mono-400.woff2','./vendor/fonts/jetbrains-mono-600.woff2','./vendor/fonts/outfit-700.woff2','./vendor/fonts/outfit-900.woff2','./vendor/xterm/xterm.css','./vendor/xterm/xterm.js','./vendor/xterm/xterm-addon-fit.js','./vendor/monaco/loader.js','./vendor/monaco/editor/editor.main.js','./vendor/monaco/editor/editor.main.css','./vendor/monaco/base/worker/workerMain.js','./js/state.js','./js/persist.js','./js/filetree.js','./js/editor.js','./js/terminal.js','./js/preview.js','./js/compiler.js','./js/settings.js','./js/git.js','./js/main.js'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(C).then(cache=>Promise.allSettled(PRECACHE.map(u=>cache.add(u)))));self.skipWaiting();});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==C).map(k=>caches.delete(k)))));self.clients.claim();});
-self.addEventListener('fetch',e=>{e.respondWith(caches.match(e.request).then(r=>{if(r)return r;return fetch(e.request).then(resp=>{if(resp.ok&&(e.request.url.includes('unpkg')||e.request.url.includes('cdnjs')||e.request.url.includes('wasmer.io')||e.request.url.includes('wasmer.wtf')||e.request.url.includes('jsdelivr')||e.request.url.includes('pyodide'))){const cl=resp.clone();caches.open(C).then(c=>c.put(e.request,cl));}return resp;}).catch(()=>new Response('Offline',{status:503}));})});});
+self.addEventListener('fetch',e=>{e.respondWith(caches.match(e.request).then(r=>{if(r)return r;return fetch(e.request).then(resp=>{if(resp.ok&&(e.request.url.includes('cdnjs')||e.request.url.includes('jsdelivr')||e.request.url.includes('esm.sh')||e.request.url.includes('pyodide'))){const cl=resp.clone();caches.open(C).then(c=>c.put(e.request,cl));}return resp;}).catch(()=>new Response('Offline',{status:503}));})});});
 `;
   const blob = new Blob([sw], { type:'application/javascript' });
   navigator.serviceWorker.register(URL.createObjectURL(blob)).catch(()=>{});
